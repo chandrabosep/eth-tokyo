@@ -23,6 +23,8 @@ import {OptionsManager} from "../src/OptionsManager.sol";
 import {OptionsHook} from "../src/OptionsHook.sol";
 import {PositionId} from "../src/libraries/PositionId.sol";
 import {MockERC20} from "./utils/MockERC20.sol";
+import {MockAqua} from "./utils/MockAqua.sol";
+import {IAqua} from "../src/interfaces/IAqua.sol";
 
 /// @notice Phase 1 — the core mechanism, with no Aqua and no 1inch in the picture.
 ///         Proves: writing an option really is minting v4 liquidity, buying one really is removing
@@ -34,6 +36,7 @@ contract OptionsManagerTest is Test {
     IPoolManager internal manager; // same contract, typed for StateLibrary
     OptionsHook internal hook;
     OptionsManager internal options;
+    MockAqua internal aqua;
     PoolSwapTest internal swapRouter;
     PoolModifyLiquidityTest internal lpRouter;
 
@@ -63,6 +66,7 @@ contract OptionsManagerTest is Test {
     function setUp() public {
         poolManager = new PoolManager(address(this));
         manager = IPoolManager(address(poolManager));
+        aqua = new MockAqua();
         swapRouter = new PoolSwapTest(poolManager);
         lpRouter = new PoolModifyLiquidityTest(poolManager);
 
@@ -92,7 +96,7 @@ contract OptionsManagerTest is Test {
         strikes[0] = STRIKE_DOWN;
         strikes[1] = STRIKE_SPOT;
         strikes[2] = STRIKE_UP;
-        options = new OptionsManager(poolManager, key, STRIKE_WIDTH, strikes);
+        options = new OptionsManager(poolManager, IAqua(address(aqua)), key, STRIKE_WIDTH, strikes);
         hook.initialize(address(options));
 
         poolManager.initialize(key, TickMath.getSqrtPriceAtTick(0));
@@ -112,6 +116,8 @@ contract OptionsManagerTest is Test {
         token1.approve(address(swapRouter), type(uint256).max);
         token0.approve(address(lpRouter), type(uint256).max);
         token1.approve(address(lpRouter), type(uint256).max);
+        token0.approve(address(aqua), type(uint256).max);
+        token1.approve(address(aqua), type(uint256).max);
         vm.stopPrank();
     }
 
@@ -398,6 +404,101 @@ contract OptionsManagerTest is Test {
     // -------------------------------------------------------------------------------------
     // Aqua-backed writing — the seller never deposits
     // -------------------------------------------------------------------------------------
+
+    bytes32 internal constant OFFER_SALT = bytes32(uint256(0xBEEF));
+
+    /// @dev Seller registers wallet balance as backing. Nothing moves.
+    function _ship(address maker, address token, uint256 amount)
+        internal
+        returns (bytes32 strategyHash)
+    {
+        bytes memory strategy = options.encodeAquaStrategy(maker, OFFER_SALT);
+        address[] memory tokens = new address[](1);
+        uint256[] memory amounts = new uint256[](1);
+        tokens[0] = token;
+        amounts[0] = amount;
+        vm.prank(maker);
+        strategyHash = aqua.ship(address(options), strategy, tokens, amounts);
+        assertEq(strategyHash, options.aquaStrategyHash(maker, OFFER_SALT), "hash mismatch");
+    }
+
+    /// @notice The whole point of Aqua: committing collateral costs the seller nothing until the
+    ///         option is actually written. No vault, no lock-up, no idle capital.
+    function test_aqua_shippingAnOfferDoesNotMoveTokens() public {
+        uint256 before1 = token1.balanceOf(seller);
+        _ship(seller, address(token1), 100e18);
+
+        assertEq(token1.balanceOf(seller), before1, "shipping must not move tokens");
+        assertEq(token1.balanceOf(address(aqua)), 0, "Aqua is a registry, not a pool");
+        assertEq(options.aquaBackingOf(seller, OFFER_SALT, currency1), 100e18, "offer not registered");
+    }
+
+    /// @notice Writing pulls collateral straight out of the seller's wallet, at the moment of the
+    ///         write — and only as much as the v4 mint actually needs.
+    function test_aqua_writeIsFundedFromTheWallet() public {
+        (int24 lo, int24 hi) = _putTicks();
+        _ship(seller, address(token1), 100e18);
+
+        uint256 before1 = token1.balanceOf(seller);
+
+        // Note: a matcher, not the seller, triggers the write. Shipping was the commitment.
+        vm.prank(buyer);
+        options.sellOptionViaAqua(seller, IDX_SPOT, true, WRITE_LIQUIDITY, OFFER_SALT);
+
+        uint256 spent = before1 - token1.balanceOf(seller);
+        assertGt(spent, 0, "collateral should come from the seller wallet");
+        assertEq(_poolLiquidityIn(lo, hi, true), WRITE_LIQUIDITY, "liquidity not minted");
+
+        uint256 shortId = options.tokenIdFor(IDX_SPOT, true, false);
+        assertEq(options.balanceOf(seller, shortId), WRITE_LIQUIDITY, "seller should own the short");
+
+        // Only the amount actually needed was drawn down; the rest stays committed and liquid.
+        assertEq(
+            options.aquaBackingOf(seller, OFFER_SALT, currency1),
+            100e18 - spent,
+            "remaining offer should be untouched"
+        );
+    }
+
+    function test_aqua_writeCannotExceedTheShippedOffer() public {
+        // Ship far less than the write needs.
+        _ship(seller, address(token1), 1e12);
+
+        vm.prank(buyer);
+        vm.expectRevert();
+        options.sellOptionViaAqua(seller, IDX_SPOT, true, WRITE_LIQUIDITY, OFFER_SALT);
+    }
+
+    function test_aqua_dockedOfferCannotBeWrittenAgainst() public {
+        _ship(seller, address(token1), 100e18);
+        bytes32 strategyHash = options.aquaStrategyHash(seller, OFFER_SALT);
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(token1);
+        vm.prank(seller);
+        aqua.dock(address(options), strategyHash, tokens);
+
+        vm.prank(buyer);
+        vm.expectRevert();
+        options.sellOptionViaAqua(seller, IDX_SPOT, true, WRITE_LIQUIDITY, OFFER_SALT);
+    }
+
+    /// @notice An Aqua-written short behaves identically downstream — same premium, same close path.
+    function test_aqua_writtenShortEarnsPremiumAndCloses() public {
+        _ship(seller, address(token1), 100e18);
+        vm.prank(buyer);
+        options.sellOptionViaAqua(seller, IDX_SPOT, true, WRITE_LIQUIDITY, OFFER_SALT);
+
+        _churn();
+
+        uint256 shortId = options.tokenIdFor(IDX_SPOT, true, false);
+        (, uint256 premium1) = options.accruedPremium(seller, shortId);
+        assertGt(premium1, 0, "Aqua-written short should accrue premium");
+
+        vm.prank(seller);
+        options.closeShort(IDX_SPOT, true, WRITE_LIQUIDITY);
+        assertEq(options.balanceOf(seller, shortId), 0, "short not closed");
+    }
 
     // -------------------------------------------------------------------------------------
     // The hook prices premium: utilisation -> LP fee

@@ -17,6 +17,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 
 import {PositionId} from "./libraries/PositionId.sol";
+import {IAqua} from "./interfaces/IAqua.sol";
 
 /// @title OptionsManager
 /// @notice A perpetual options market built by *reusing* Uniswap v4 liquidity instead of
@@ -77,6 +78,9 @@ contract OptionsManager is ERC1155, IUnlockCallback {
     // ---------------------------------------------------------------------------------------
 
     IPoolManager public immutable poolManager;
+
+    /// @notice 1inch Aqua — the shared liquidity registry that backs option sellers.
+    IAqua public immutable AQUA;
 
     Currency public immutable currency0;
     Currency public immutable currency1;
@@ -153,6 +157,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
 
     constructor(
         IPoolManager poolManager_,
+        IAqua aqua_,
         PoolKey memory key,
         int24 strikeWidth_,
         int24[] memory strikeTicks_
@@ -161,6 +166,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         // Strike indices are uint8 on the trading entrypoints.
         require(strikeTicks_.length > 0 && strikeTicks_.length <= 255, BadStrikeLadder(strikeTicks_.length));
         poolManager = poolManager_;
+        AQUA = aqua_;
         currency0 = key.currency0;
         currency1 = key.currency1;
         fee = key.fee;
@@ -296,6 +302,10 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         uint8 strikeIndex;
         bool isPut;
         uint128 liquidity;
+        // Seller-collateral routing. When `viaAqua` is set the seller's collateral is pulled
+        // straight out of their wallet through Aqua instead of being transferred in directly.
+        bool viaAqua;
+        bytes32 aquaSalt;
     }
 
     /// @notice Write an option: mint concentrated liquidity at the strike. You are now short.
@@ -309,13 +319,91 @@ contract OptionsManager is ERC1155, IUnlockCallback {
                     user: msg.sender,
                     strikeIndex: strikeIndex,
                     isPut: isPut,
-                    liquidity: liquidity
+                    liquidity: liquidity,
+                    viaAqua: false,
+                    aquaSalt: bytes32(0)
                 })
             )
         );
     }
 
     // ---------------------------------------------------------------------------------------
+    // Aqua-backed writing — the seller never deposits
+    // ---------------------------------------------------------------------------------------
+
+    /// @notice A seller's standing offer to back option writing, as registered with Aqua.
+    ///
+    /// @dev The strategy is scoped to the MARKET, not to a single series — deliberately. This is
+    ///      the whole reason Aqua is in the stack.
+    ///
+    ///      If the hash included the strike and the side, one shipped balance would back exactly
+    ///      one series, and a four-leg structure (a spread, a strangle, a condor) would need four
+    ///      separate offers and four times the committed capital. That is just a vault with extra
+    ///      steps. Scoped to the market, a single untouched wallet balance backs every leg the
+    ///      seller writes, and Aqua caps total draw at the registered amount — so the seller's
+    ///      worst case is bounded by one number no matter how many legs they run.
+    ///
+    ///      `salt` lets one seller keep several independent offers alive, since Aqua strategies are
+    ///      immutable once shipped.
+    struct AquaStrategy {
+        address maker;
+        address app;
+        bytes32 salt;
+    }
+
+    /// @notice The exact bytes a seller must pass to `IAqua.ship` to back this series.
+    /// @dev Exposed so the frontend and the seller never have to guess the encoding:
+    ///        token.approve(AQUA, amount);
+    ///        AQUA.ship(address(optionsManager), encodeAquaStrategy(...), [token], [amount]);
+    ///      The tokens stay in the seller's wallet until someone actually writes against the offer.
+    function encodeAquaStrategy(address maker, bytes32 salt) public view returns (bytes memory) {
+        return abi.encode(AquaStrategy({maker: maker, app: address(this), salt: salt}));
+    }
+
+    function aquaStrategyHash(address maker, bytes32 salt) public view returns (bytes32) {
+        return keccak256(encodeAquaStrategy(maker, salt));
+    }
+
+    /// @notice How much of a seller's wallet balance is still committed to this offer.
+    /// @dev This is the headline Aqua property: the number is non-zero while the tokens are still
+    ///      sitting in the seller's own wallet, spendable and able to back other Aqua strategies.
+    function aquaBackingOf(address maker, bytes32 salt, Currency token) external view returns (uint256) {
+        (uint248 balance,) =
+            AQUA.rawBalances(maker, address(this), aquaStrategyHash(maker, salt), Currency.unwrap(token));
+        return balance;
+    }
+
+    /// @notice Write an option funded from a maker's Aqua-registered wallet balance.
+    ///
+    /// @dev This is the Aqua path, and the difference from `sellOption` is where the collateral
+    ///      comes from. There is no vault and no prior deposit: the maker shipped an offer, kept
+    ///      their tokens, and this call pulls exactly the amount the v4 mint needs at the moment
+    ///      the option is actually written.
+    ///
+    ///      Callable by anyone, because shipping the strategy IS the maker's commitment — that is
+    ///      Aqua's model of a quoted liquidity commitment. Aqua itself caps the pull at the
+    ///      registered amount, and the maker can withdraw the offer at any time with `IAqua.dock`.
+    ///
+    ///      HACKATHON SIMPLIFICATION: the strategy does not encode a minimum acceptable premium, so
+    ///      a matcher chooses the moment of execution. Production would sign a price band into the
+    ///      strategy bytes.
+    function sellOptionViaAqua(address maker, uint8 strikeIndex, bool isPut, uint128 liquidity, bytes32 salt) external {
+        require(liquidity != 0, ZeroLiquidity());
+        poolManager.unlock(
+            abi.encode(
+                CallbackData({
+                    action: Action.SELL,
+                    user: maker,
+                    strikeIndex: strikeIndex,
+                    isPut: isPut,
+                    liquidity: liquidity,
+                    viaAqua: true,
+                    aquaSalt: salt
+                })
+            )
+        );
+    }
+
     /// @notice Buy an option: pull previously-written liquidity out of the pool. You are now long.
     /// @dev You post only `BUYER_COLLATERAL_BPS` of the notional you removed.
     function buyOption(uint8 strikeIndex, bool isPut, uint128 liquidity) external {
@@ -327,7 +415,9 @@ contract OptionsManager is ERC1155, IUnlockCallback {
                     user: msg.sender,
                     strikeIndex: strikeIndex,
                     isPut: isPut,
-                    liquidity: liquidity
+                    liquidity: liquidity,
+                    viaAqua: false,
+                    aquaSalt: bytes32(0)
                 })
             )
         );
@@ -343,7 +433,9 @@ contract OptionsManager is ERC1155, IUnlockCallback {
                     user: msg.sender,
                     strikeIndex: strikeIndex,
                     isPut: isPut,
-                    liquidity: liquidity
+                    liquidity: liquidity,
+                    viaAqua: false,
+                    aquaSalt: bytes32(0)
                 })
             )
         );
@@ -359,7 +451,9 @@ contract OptionsManager is ERC1155, IUnlockCallback {
                     user: msg.sender,
                     strikeIndex: strikeIndex,
                     isPut: isPut,
-                    liquidity: liquidity
+                    liquidity: liquidity,
+                    viaAqua: false,
+                    aquaSalt: bytes32(0)
                 })
             )
         );
@@ -425,6 +519,14 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         ERC20(Currency.unwrap(currency)).safeTransferFrom(from, address(this), amount);
     }
 
+    /// @dev Pull a seller's collateral out of their own wallet through Aqua. Aqua decrements the
+    ///      registered balance (reverting if the offer does not cover it) and performs the
+    ///      `transferFrom` itself, so the maker approved Aqua rather than this contract.
+    function _pullViaAqua(Currency currency, address maker, bytes32 strategyHash, uint256 amount) internal {
+        if (amount == 0) return;
+        AQUA.pull(maker, strategyHash, Currency.unwrap(currency), amount, address(this));
+    }
+
     function _pay(Currency currency, address to, uint256 amount) internal {
         if (amount == 0) return;
         currency.transfer(to, amount);
@@ -448,8 +550,14 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         // either straight from their wallet via Aqua, or by direct transfer.
         uint256 owed0 = principal0 < 0 ? uint256(uint128(-principal0)) : 0;
         uint256 owed1 = principal1 < 0 ? uint256(uint128(-principal1)) : 0;
-        _pull(currency0, d.user, owed0);
-        _pull(currency1, d.user, owed1);
+        if (d.viaAqua) {
+            bytes32 strategyHash = aquaStrategyHash(d.user, d.aquaSalt);
+            _pullViaAqua(currency0, d.user, strategyHash, owed0);
+            _pullViaAqua(currency1, d.user, strategyHash, owed1);
+        } else {
+            _pull(currency0, d.user, owed0);
+            _pull(currency1, d.user, owed1);
+        }
 
         _netOut(currency0, total0);
         _netOut(currency1, total1);
@@ -657,7 +765,9 @@ contract OptionsManager is ERC1155, IUnlockCallback {
                     user: owner,
                     strikeIndex: strikeIndex,
                     isPut: isPut,
-                    liquidity: liquidity
+                    liquidity: liquidity,
+                    viaAqua: false,
+                    aquaSalt: bytes32(0)
                 })
             )
         );
