@@ -135,3 +135,44 @@ export function liquidityForTargetAmount(
   return (targetRaw / per) * 1e18;
 }
 
+/** Inverse of `tickToUsdPrice` — the tick a given USD price corresponds to. */
+export function usdPriceToTick(usd: number): number {
+  if (usd <= 0) return 0;
+  const raw = usd / Math.pow(10, WETH_DECIMALS - USDC_DECIMALS);
+  return Math.round(Math.log(raw) / Math.log(1.0001));
+}
+
+/**
+ * P&L of one option leg at a hypothetical price, in USD.
+ *
+ * A long removed range amounts (a0, a1) at open and must restore (b0, b1) to close:
+ *
+ *   long  P&L(P) = (a0·P + a1) − (b0(P)·P + b1(P))
+ *   short P&L(P) = −long                              (zero-sum; see test_H_zeroSum…)
+ *
+ * Both are zero at inception, because b == a there. That is the honest shape of this mechanism:
+ * opening a position is delta-neutral against the capital you posted, and exposure appears only as
+ * the range recomposes. Reading a static `amount0` and calling it delta misses the fixed notional
+ * leg entirely, which is why this returns a payoff curve rather than a single greek.
+ *
+ * Premium is excluded — it depends on realised swap volume between now and close, which no
+ * scenario table can know. Shorts earn it on top of these numbers; longs pay it.
+ */
+export function legPnlAtPrice(
+  liquidity: number,
+  tickLower: number,
+  tickUpper: number,
+  openTick: number,
+  scenarioTick: number,
+  scenarioPrice: number,
+  isLong: boolean,
+): number {
+  const open = amountsForLiquidity(liquidity, tickLower, tickUpper, openTick);
+  const now = amountsForLiquidity(liquidity, tickLower, tickUpper, scenarioTick);
+  const a0 = open.amount0 / 10 ** WETH_DECIMALS;
+  const a1 = open.amount1 / 10 ** USDC_DECIMALS;
+  const b0 = now.amount0 / 10 ** WETH_DECIMALS;
+  const b1 = now.amount1 / 10 ** USDC_DECIMALS;
+  const longPnl = a0 * scenarioPrice + a1 - (b0 * scenarioPrice + b1);
+  return isLong ? longPnl : -longPnl;
+}
