@@ -245,6 +245,42 @@ export const optionsManagerAbi = [
     ],
     outputs: [],
   },
+  // Errors, so a revert reads as a sentence instead of a selector. viem can only decode what the
+  // ABI declares — without these, `InsufficientAquaBacking` reaches the user as bare hex, which is
+  // barely an improvement on the panic it replaced.
+  { type: "error", name: "ZeroLiquidity", inputs: [] },
+  { type: "error", name: "EmptyStrategy", inputs: [] },
+  { type: "error", name: "NoPosition", inputs: [] },
+  { type: "error", name: "LongStillSolvent", inputs: [] },
+  { type: "error", name: "NativeCurrencyUnsupported", inputs: [] },
+  { type: "error", name: "NotPoolManager", inputs: [] },
+  { type: "error", name: "BadStrikeIndex", inputs: [{ name: "index", type: "uint8" }] },
+  { type: "error", name: "BadStrikeLadder", inputs: [{ name: "length", type: "uint256" }] },
+  {
+    type: "error",
+    name: "InsufficientWrittenLiquidity",
+    inputs: [
+      { name: "available", type: "uint128" },
+      { name: "requested", type: "uint128" },
+    ],
+  },
+  {
+    type: "error",
+    name: "PositionTooLarge",
+    inputs: [
+      { name: "held", type: "uint128" },
+      { name: "requested", type: "uint128" },
+    ],
+  },
+  {
+    type: "error",
+    name: "InsufficientAquaBacking",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "required", type: "uint256" },
+      { name: "available", type: "uint256" },
+    ],
+  },
 ] as const;
 
 export const aquaAbi = [
@@ -286,6 +322,14 @@ export const aquaAbi = [
     outputs: [
       { name: "balance", type: "uint248" },
       { name: "tokensCount", type: "uint8" },
+    ],
+  },
+  {
+    type: "error",
+    name: "StrategiesMustBeImmutable",
+    inputs: [
+      { name: "app", type: "address" },
+      { name: "strategyHash", type: "bytes32" },
     ],
   },
 ] as const;

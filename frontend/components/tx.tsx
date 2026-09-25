@@ -1,9 +1,12 @@
 "use client";
 
 import { useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { type Address } from "viem";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { deployed, USDC_DECIMALS, WETH_DECIMALS } from "@/lib/config";
+import { fmt, fromRaw } from "@/lib/options";
 
 /**
  * Wraps write + receipt so buttons can show pending / confirmed without ceremony.
@@ -56,9 +59,81 @@ function Shell({
   );
 }
 
+/**
+ * Turn a viem revert into something a human can act on.
+ *
+ * Two layers, because the failure that prompted this had neither.
+ *
+ * First the structured one: viem decodes a custom error into `errorName` + `args` when the ABI
+ * declares it, so `InsufficientAquaBacking` can be printed with the token's symbol and the amounts
+ * in whole units — "needs 30,000.00 USDC, offer has 18,000.80" — instead of an address and two
+ * raw integers. That specific error is worth the special case: it is the one a seller hits by
+ * simply writing more than they shipped, and the remedy depends on the numbers.
+ *
+ * Then the fallback: scrape the message. viem's first line is only ever "The contract function X
+ * reverted.", so `message.split("\n")[0]` discards everything useful — which is exactly how a
+ * failed write came out as "reverted with the following reason:" followed by nothing.
+ */
+/**
+ * Find viem's decoded revert by SHAPE, not by `instanceof`.
+ *
+ * viem ships both ESM and CJS builds, so a bundle can end up holding two copies of
+ * `ContractFunctionRevertedError`. The error thrown by wagmi's copy then fails `instanceof` against
+ * the one imported here — silently, falling through to the string fallback with no sign anything
+ * is wrong. Walking `cause` for the decoded payload works whichever copy threw.
+ */
+function decodedRevert(error: unknown): { errorName?: string; args?: readonly unknown[] } | undefined {
+  for (let e: unknown = error, depth = 0; e && depth < 12; depth++) {
+    const data = (e as { data?: { errorName?: string; args?: readonly unknown[] } }).data;
+    if (data?.errorName) return data;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+export function revertMessage(error: unknown): string {
+  const reverted = decodedRevert(error);
+
+  if (reverted) {
+    const { errorName, args } = reverted;
+    if (errorName === "InsufficientAquaBacking" && args?.length === 3) {
+      const [token, required, available] = args as unknown as [Address, bigint, bigint];
+      const isWeth = token.toLowerCase() === deployed.weth.toLowerCase();
+      const dp = isWeth ? WETH_DECIMALS : USDC_DECIMALS;
+      const sym = isWeth ? "WETH" : "USDC";
+      const show = (v: bigint) => fmt(fromRaw(v, dp), isWeth ? 5 : 2);
+      const tail = "Aqua strategies are immutable, so this needs a new offer, not a top-up.";
+      return available === 0n
+        ? `This range is funded in ${sym} and your offer does not back ${sym} at all — it needs ${show(
+            required,
+          )}. ${tail}`
+        : `Aqua offer too small — this write needs ${show(required)} ${sym} but the offer has ${show(
+            available,
+          )}. ${tail}`;
+    }
+    if (errorName) {
+      return args?.length ? `${errorName}(${args.map(String).join(", ")})` : errorName;
+    }
+  }
+
+  const lines = ((error as Error)?.message ?? String(error)).split("\n").map((l) => l.trim());
+
+  const i = lines.findIndex((l) => l.startsWith("Error:") && l.length > "Error:".length);
+  if (i >= 0) {
+    // The argument values sit on the line after the signature.
+    const args = lines[i + 1]?.startsWith("(") ? ` ${lines[i + 1]}` : "";
+    return `${lines[i].replace(/^Error:\s*/, "")}${args}`;
+  }
+
+  const reason = lines.findIndex((l) => l.endsWith("reverted with the following reason:"));
+  if (reason >= 0 && lines[reason + 1]) return lines[reason + 1];
+
+  return lines[0] ?? "unknown error";
+}
+
 export function TxNote({ tx, label }: { tx: ReturnType<typeof useTx>; label: string }) {
   if (tx.error) {
-    const msg = (tx.error as Error).message.split("\n")[0];
+    const msg = revertMessage(tx.error);
     return (
       <Shell tone="error" icon={<AlertTriangle className="size-3.5" aria-hidden="true" />}>
         {label} failed: <span className="font-mono text-[11.5px]">{msg}</span>
