@@ -379,3 +379,26 @@ export const stateViewAbi = [
     ],
   },
 ] as const;
+
+/**
+ * OptionsHook — the pricing surface.
+ *
+ * Both inputs to the LP fee are readable, which is the point: a judge (or a writer) can see that
+ * premium is a function of measured volatility and measured utilisation, and not of anything
+ * quoted off-chain.
+ */
+export const optionsHookAbi = [
+  {
+    type: "function",
+    name: "realisedVolBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  { type: "function", name: "utilisationBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint16" }] },
+  { type: "function", name: "volFee", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },
+  { type: "function", name: "currentFee", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },
+  { type: "function", name: "BASE_FEE", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },
+  { type: "function", name: "VOL_FEE_MAX", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },
+  { type: "function", name: "MAX_FEE", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },
+] as const;

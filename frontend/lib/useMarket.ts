@@ -1,7 +1,7 @@
 "use client";
 
 import { useReadContract, useReadContracts } from "wagmi";
-import { optionsManagerAbi, stateViewAbi } from "./abi";
+import { optionsHookAbi, optionsManagerAbi, stateViewAbi } from "./abi";
 import { deployed, poolId, STATE_VIEW } from "./config";
 import { SERIES } from "./options";
 
@@ -67,4 +67,26 @@ export function useSeries(): { rows: SeriesRow[]; isLoading: boolean } {
   });
 
   return { rows, isLoading: l1 || l2 };
+}
+
+/**
+ * The hook's live pricing inputs.
+ *
+ * Read straight from the hook rather than recomputed here, so what the page shows is what the next
+ * swap will actually be charged — the fee is not a display convention, it IS the premium.
+ */
+export function useHookPricing() {
+  const { data } = useReadContracts({
+    contracts: (
+      ["realisedVolBps", "utilisationBps", "volFee", "currentFee"] as const
+    ).map((fn) => ({ address: deployed.optionsHook, abi: optionsHookAbi, functionName: fn }) as const),
+    query: { refetchInterval: 8_000 },
+  });
+
+  return {
+    realisedVolBps: Number((data?.[0]?.result as bigint) ?? 0n),
+    utilisationBps: Number((data?.[1]?.result as number) ?? 0),
+    volFee: Number((data?.[2]?.result as number) ?? 0),
+    currentFee: Number((data?.[3]?.result as number) ?? 0),
+  };
 }
