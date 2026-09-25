@@ -8,7 +8,9 @@ optimizer = true
 # Matches Uniswap v4-core's own settings; Pool.sol does not compile below this.
 optimizer_runs = 44444444
 bytecode_hash = "none"
+gas_limit = "3000000000"
 ffi = false
+fs_permissions = [{ access = "read-write", path = "./deployments" }, { access = "read", path = "./out" }]
 
 [profile.default.fuzz]
 runs = 256
