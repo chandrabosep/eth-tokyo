@@ -542,6 +542,155 @@ contract OptionsManagerTest is Test {
     // Volatility — the other half of the price
     // -------------------------------------------------------------------------------------
 
+    /// @dev Move price by roughly `ticks`, wait `secs`, and let the hook take an observation.
+    ///      Two swaps because the estimator samples on every swap, and a round trip keeps the pool
+    ///      near where it started so successive steps are comparable.
+    function _volStep(uint256 amountIn, uint256 secs) internal {
+        vm.warp(block.timestamp + secs);
+        _swapExactIn(true, amountIn);
+        vm.warp(block.timestamp + secs);
+        _swapExactIn(false, amountIn);
+    }
+
+    /// @notice A market with no history has no volatility, and prices at the floor.
+    function test_vol_startsAtZeroAndPricesAtTheFloor() public view {
+        assertEq(hook.realisedVolBps(), 0, "nothing observed yet");
+        assertEq(hook.volFee(), hook.BASE_FEE(), "no volatility means no volatility premium");
+        assertEq(hook.currentFee(), hook.BASE_FEE(), "and an untouched book means no spread");
+    }
+
+    /// @notice The estimator produces believable annualised numbers, not just a monotone counter.
+    ///
+    /// @dev This is the test that would catch a scaling mistake. Ticks are log-price, so a tick
+    ///      delta is a log return and sigma annualises by `sqrt(seconds per year)`. A market that
+    ///      moves a few basis points every ten minutes is a quiet one; a market making the same
+    ///      move every few seconds is a violent one. Both are printed so the numbers can be read
+    ///      rather than taken on trust.
+    function test_vol_isMeasuredInBelievableAnnualisedTerms() public {
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+
+        // Calm: the same size round trip, ten minutes apart.
+        for (uint256 i = 0; i < 12; i++) {
+            _volStep(0.02e18, 600);
+        }
+        uint256 calm = hook.realisedVolBps();
+        uint24 calmFee = hook.currentFee();
+        console2.log("calm  : realised vol bps", calm);
+        console2.log("calm  : lp fee           ", calmFee);
+
+        // Violent: the same size round trip, five seconds apart.
+        for (uint256 i = 0; i < 12; i++) {
+            _volStep(0.02e18, 5);
+        }
+        uint256 violent = hook.realisedVolBps();
+        uint24 violentFee = hook.currentFee();
+        console2.log("violent: realised vol bps", violent);
+        console2.log("violent: lp fee          ", violentFee);
+
+        assertGt(violent, calm, "the same move at 120x the frequency must read as more volatile");
+        assertGt(violentFee, calmFee, "and must cost more premium");
+
+        // A quiet market should not be reading triple-digit annualised vol.
+        assertLt(calm, 5_000, "calm market should be well under 50% annualised");
+        // The scaling is only right if a five-second cadence lands in a plausible band rather than
+        // overflowing. Note these are absolute numbers for a deliberately thin test pool — one
+        // 120-tick range of liquidity — so they read far more violent than Base mainnet would.
+        assertGt(violent, 20_000, "a five-second cadence should read as a disorderly market");
+        // The per-observation cap is pinned at 400% annualised. This assertion is what catches the
+        // scaling being off by a power of ten, which it was: the first version of the cap constant
+        // was 1e6 too large and let the estimator report 389,142% annualised.
+        assertLt(violent, 41_000, "no reading may exceed the 400% cap");
+    }
+
+    /// @notice Volatility decays when the market settles down. Premium is not a ratchet.
+    function test_vol_decaysWhenTheMarketCalms() public {
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+
+        for (uint256 i = 0; i < 10; i++) {
+            _volStep(0.02e18, 2);
+        }
+        uint256 peak = hook.realisedVolBps();
+        assertGt(peak, 0, "test is vacuous without a spike");
+
+        for (uint256 i = 0; i < 20; i++) {
+            _volStep(0.001e18, 1800);
+        }
+        uint256 settled = hook.realisedVolBps();
+
+        console2.log("peak vol bps   ", peak);
+        console2.log("settled vol bps", settled);
+        assertLt(settled, peak / 2, "EWMA should have decayed the spike out");
+        assertLt(hook.currentFee(), hook.VOL_FEE_MAX(), "and the fee should have come back down");
+    }
+
+    /// @notice Volatility and utilisation compose: each one alone lifts the fee, both together
+    ///         reach the ceiling, and nothing ever leaves the bounds.
+    function test_vol_composesWithUtilisationAndStaysBounded() public {
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+
+        uint24 quietAndIdle = hook.currentFee();
+        assertEq(quietAndIdle, hook.BASE_FEE());
+
+        // Volatility alone.
+        for (uint256 i = 0; i < 12; i++) {
+            _volStep(0.02e18, 3);
+        }
+        uint24 volOnly = hook.currentFee();
+        assertGt(volOnly, quietAndIdle, "volatility alone must lift the fee");
+        assertLe(volOnly, hook.VOL_FEE_MAX(), "volatility alone cannot exceed its own ceiling");
+
+        // Then utilisation on top.
+        vm.prank(buyer);
+        options.buyOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+        assertEq(hook.utilisationBps(), 10_000);
+
+        uint24 both = hook.currentFee();
+        console2.log("fee, volatility only    ", volOnly);
+        console2.log("fee, volatility + lent  ", both);
+
+        assertEq(both, hook.MAX_FEE(), "a fully-lent book charges the ceiling whatever the vol");
+        assertGe(both, volOnly);
+        assertLe(both, hook.MAX_FEE(), "the ceiling is hard");
+    }
+
+    /// @notice A writer earns more premium from the same swap flow when the market is volatile.
+    ///
+    /// @dev The point of the whole exercise. Same liquidity, same round trips, same book — the only
+    ///      difference is how fast the market is moving, and the premium stream reflects it.
+    function test_vol_volatileMarketPaysWritersMore() public {
+        uint256 shortId = options.tokenIdFor(IDX_SPOT, true, false);
+
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+
+        // Settle into a calm regime, then measure one round trip's premium.
+        for (uint256 i = 0; i < 12; i++) {
+            _volStep(0.02e18, 900);
+        }
+        (, uint256 before1) = options.accruedPremium(seller, shortId);
+        _volStep(0.02e18, 900);
+        (, uint256 after1) = options.accruedPremium(seller, shortId);
+        uint256 calmPremium = after1 - before1;
+
+        // Same trade, violent regime.
+        for (uint256 i = 0; i < 12; i++) {
+            _volStep(0.02e18, 2);
+        }
+        (, before1) = options.accruedPremium(seller, shortId);
+        _volStep(0.02e18, 900);
+        (, after1) = options.accruedPremium(seller, shortId);
+        uint256 volatilePremium = after1 - before1;
+
+        console2.log("premium per round trip, calm    :", calmPremium);
+        console2.log("premium per round trip, volatile:", volatilePremium);
+
+        assertGt(calmPremium, 0, "calm market should still pay something");
+        assertGt(volatilePremium, calmPremium, "identical flow must pay more when vol is high");
+    }
+
     /// @notice And the fee is not cosmetic — swappers actually pay it, so writers actually earn it.
     function test_hook_utilisationSpreadIsPaidByRealSwaps() public {
         uint256 shortId = options.tokenIdFor(IDX_SPOT, true, false);
