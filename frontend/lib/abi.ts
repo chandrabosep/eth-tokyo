@@ -271,6 +271,23 @@ export const aquaAbi = [
     ],
     outputs: [],
   },
+  {
+    // `tokensCount` is the only way to tell a salt that was never shipped (0) from one that was
+    // shipped and is now spent or docked (non-zero). A used salt can never be shipped again.
+    type: "function",
+    name: "rawBalances",
+    stateMutability: "view",
+    inputs: [
+      { name: "maker", type: "address" },
+      { name: "app", type: "address" },
+      { name: "strategyHash", type: "bytes32" },
+      { name: "token", type: "address" },
+    ],
+    outputs: [
+      { name: "balance", type: "uint248" },
+      { name: "tokensCount", type: "uint8" },
+    ],
+  },
 ] as const;
 
 export const erc20Abi = [

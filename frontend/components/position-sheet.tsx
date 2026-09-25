@@ -14,7 +14,8 @@ import { SegmentedItem, SegmentedList, SegmentedRoot } from "@/components/ui/tog
 import { cn } from "@/lib/utils";
 
 import { aquaAbi, erc20Abi, optionsManagerAbi } from "@/lib/abi";
-import { deployed, OFFER_SALT, strikeLabel, USDC_DECIMALS, WETH_DECIMALS } from "@/lib/config";
+import { deployed, strikeLabel, USDC_DECIMALS, WETH_DECIMALS } from "@/lib/config";
+import { useAquaOffers } from "@/lib/aqua";
 import {
   amountsForLiquidity,
   fmt,
@@ -193,8 +194,17 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
  *   1. Ship — register wallet balance as backing. Nothing moves.
  *   2. Write — the option is minted and only then is collateral pulled from the wallet.
  *
- * The offer must register EVERY token the range can demand. A straddling range is funded in both,
- * and shipping only one leg makes the write revert on the second pull.
+ * Two things about step 1 that this panel exists to get right.
+ *
+ * The offer must cover the write, not merely exist. Aqua caps a pull at the registered balance and
+ * enforces it with plain arithmetic, so an offer that is short — including one that funded earlier
+ * writes and is now low — fails as a bare panic with no reason string attached. `collateralFor` is
+ * read from the manager rather than estimated here, because it is the same computation the pool
+ * will do, to the wei.
+ *
+ * And an offer cannot be topped up. Aqua strategies are immutable: a shipped salt is spent forever,
+ * `dock` does not free it, and re-shipping it reverts. So more backing means a NEW offer under the
+ * next salt, which is what `useAquaOffers` finds.
  */
 function SellPanel({
   strikeIndex,
@@ -210,54 +220,84 @@ function SellPanel({
   const { address } = useAccount();
   const [backing, setBacking] = useState<Record<string, string>>({});
 
-  // Default each leg's offer to 10x what this trade needs, so the seller can write repeatedly.
+  // Exactly what the mint will take, quoted by the contract. Never a local estimate: an offer one
+  // wei short cannot be topped up, it has to be abandoned.
+  const { data: quote } = useReadContract({
+    address: deployed.optionsManager,
+    abi: optionsManagerAbi,
+    functionName: "collateralFor",
+    args: [strikeIndex, isPut, liquidity],
+    query: { enabled: liquidity > 0n },
+  });
+  const need = useMemo(
+    () => ({ weth: (quote?.[0] as bigint) ?? 0n, usdc: (quote?.[1] as bigint) ?? 0n }),
+    [quote],
+  );
+
+  const { covering, nextFree, refetch: refetchOffers } = useAquaOffers(address, need);
+  const salt = covering?.salt ?? nextFree?.salt;
+
+  // Required tokens, in the order the write pulls them.
+  const required = useMemo(
+    () =>
+      (
+        [
+          { token: deployed.weth, symbol: "WETH", decimals: WETH_DECIMALS, amount: need.weth },
+          { token: deployed.usdc, symbol: "USDC", decimals: USDC_DECIMALS, amount: need.usdc },
+        ] as const
+      ).filter((t) => t.amount > 0n),
+    [need],
+  );
+
+  // Default a new offer to 10x this trade, so the seller can write repeatedly before re-shipping.
   useEffect(() => {
     setBacking((prev) => {
       const next = { ...prev };
-      for (const l of legs) {
-        if (next[l.symbol] === undefined) next[l.symbol] = String(Number((l.amount * 10).toPrecision(4)));
+      for (const t of required) {
+        if (next[t.symbol] === undefined) {
+          next[t.symbol] = String(Number((fromRaw(t.amount, t.decimals) * 10).toPrecision(4)));
+        }
       }
       return next;
     });
-  }, [legs]);
+  }, [required]);
 
   const { data: strategy } = useReadContract({
     address: deployed.optionsManager,
     abi: optionsManagerAbi,
     functionName: "encodeAquaStrategy",
-    args: address ? [address, OFFER_SALT] : undefined,
-    query: { enabled: !!address },
+    args: address && nextFree ? [address, nextFree.salt] : undefined,
+    query: { enabled: !!address && !!nextFree },
   });
 
-  const base = { address: deployed.optionsManager, abi: optionsManagerAbi } as const;
-  const { data: backingData } = useReadContracts({
-    contracts: legs.map(
-      (l) => ({ ...base, functionName: "aquaBackingOf", args: [address ?? "0x0", OFFER_SALT, l.token] }) as const,
-    ),
-    query: { enabled: !!address && legs.length > 0 },
-  });
   const { data: tokenData } = useReadContracts({
-    contracts: legs.flatMap((l) => [
-      { address: l.token, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0"] } as const,
-      { address: l.token, abi: erc20Abi, functionName: "allowance", args: [address ?? "0x0", deployed.aqua] } as const,
+    contracts: required.flatMap((t) => [
+      { address: t.token, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0"] } as const,
+      { address: t.token, abi: erc20Abi, functionName: "allowance", args: [address ?? "0x0", deployed.aqua] } as const,
     ]),
-    query: { enabled: !!address && legs.length > 0 },
+    query: { enabled: !!address && required.length > 0 },
   });
 
   const approve = useTx();
   const ship = useTx();
   const write = useTx();
 
-  const enriched = legs.map((l, i) => ({
-    ...l,
-    committed: (backingData?.[i]?.result as bigint) ?? 0n,
+  // Both of these change the registered balance, so the panel must re-read it to advance.
+  const shipped = ship.isSuccess;
+  const wrote = write.isSuccess;
+  useEffect(() => {
+    if (shipped || wrote) refetchOffers();
+  }, [shipped, wrote, refetchOffers]);
+
+  const enriched = required.map((t, i) => ({
+    ...t,
+    committed: t.symbol === "WETH" ? (covering?.weth ?? 0n) : (covering?.usdc ?? 0n),
     wallet: (tokenData?.[i * 2]?.result as bigint) ?? 0n,
     allowance: (tokenData?.[i * 2 + 1]?.result as bigint) ?? 0n,
   }));
 
-  const needsApproval = enriched.find((l) => l.allowance === 0n);
-  // Every leg must be backed before the write can pull it.
-  const allBacked = enriched.length > 0 && enriched.every((l) => l.committed > 0n);
+  const needsApproval = enriched.find((l) => l.allowance < l.amount);
+  const funded = required.length > 0 && !!covering;
 
   return (
     <div className="flex flex-col gap-4">
@@ -265,82 +305,107 @@ function SellPanel({
         {enriched.map((l) => (
           <Row
             key={l.symbol}
-            label={`${l.symbol} wallet / committed via Aqua`}
-            value={`${fmt(fromRaw(l.wallet, l.decimals), 2)} / ${fmt(fromRaw(l.committed, l.decimals), 2)}`}
+            label={`${l.symbol} needed / committed`}
+            value={`${fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)} / ${fmt(
+              fromRaw(l.committed, l.decimals),
+              l.decimals === 18 ? 5 : 2,
+            )}`}
             mono
           />
         ))}
+        {covering && <Row label="Funded by offer" value={`#${covering.index}`} mono />}
       </div>
 
-      {!allBacked ? (
+      {!funded ? (
         <>
-          {enriched.map((l) => (
-            <div key={l.symbol} className="space-y-1.5">
-              <Label htmlFor={`ship-${l.symbol}`}>
-                Step 1 — Back an offer with Aqua ({l.symbol})
-                {l.committed > 0n && <span className="ml-1 normal-case text-lime-deep">· already backed</span>}
-              </Label>
-              <Input
-                id={`ship-${l.symbol}`}
-                inputMode="decimal"
-                disabled={l.committed > 0n}
-                value={backing[l.symbol] ?? ""}
-                onChange={(e) => setBacking((b) => ({ ...b, [l.symbol]: e.target.value }))}
-              />
-            </div>
-          ))}
-
-          {needsApproval ? (
-            <Button
-              disabled={approve.busy}
-              onClick={() =>
-                approve.send({
-                  address: needsApproval.token,
-                  abi: erc20Abi,
-                  functionName: "approve",
-                  args: [deployed.aqua, maxUint256],
-                })
-              }
-            >
-              {approve.busy ? "Approving…" : `Approve Aqua to draw ${needsApproval.symbol}`}
-            </Button>
+          {required.length === 0 ? (
+            <Note>Enter a size to see what this write needs.</Note>
+          ) : !nextFree ? (
+            <Note>
+              <strong className="text-foreground">Every offer slot is spent.</strong> Aqua strategies are
+              immutable, so each salt can only be shipped once. Nothing is lost — the tokens never left your
+              wallet — but this build scans a fixed number of slots.
+            </Note>
           ) : (
-            <Button
-              disabled={!strategy || ship.busy || enriched.length === 0}
-              onClick={() =>
-                ship.send({
-                  address: deployed.aqua,
-                  abi: aquaAbi,
-                  functionName: "ship",
-                  args: [
-                    deployed.optionsManager,
-                    strategy!,
-                    enriched.map((l) => l.token),
-                    enriched.map((l) => toRaw(Number(backing[l.symbol]) || 0, l.decimals)),
-                  ],
-                })
-              }
-            >
-              {ship.busy ? "Shipping…" : `Ship offer to Aqua${enriched.length > 1 ? " (both legs)" : ""}`}
-            </Button>
-          )}
+            <>
+              {enriched.map((l) => (
+                <div key={l.symbol} className="space-y-1.5">
+                  <Label htmlFor={`ship-${l.symbol}`}>
+                    Step 1 — Back a new offer with Aqua ({l.symbol})
+                  </Label>
+                  <Input
+                    id={`ship-${l.symbol}`}
+                    inputMode="decimal"
+                    value={backing[l.symbol] ?? ""}
+                    onChange={(e) => setBacking((b) => ({ ...b, [l.symbol]: e.target.value }))}
+                  />
+                  {toRaw(Number(backing[l.symbol]) || 0, l.decimals) < l.amount && (
+                    <p className="text-[11px] text-destructive">
+                      Below the {fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)} {l.symbol} this
+                      write needs. An offer cannot be topped up later.
+                    </p>
+                  )}
+                </div>
+              ))}
 
-          <Note>
-            <strong className="text-foreground">Nothing leaves your wallet.</strong> Aqua registers the balance
-            as backing; the tokens stay yours, stay liquid, and can back other Aqua strategies at the same time.
-            {enriched.length > 1 && " This range straddles spot, so both legs are registered in one offer."}
-          </Note>
+              {needsApproval ? (
+                <Button
+                  disabled={approve.busy}
+                  onClick={() =>
+                    approve.send({
+                      address: needsApproval.token,
+                      abi: erc20Abi,
+                      functionName: "approve",
+                      args: [deployed.aqua, maxUint256],
+                    })
+                  }
+                >
+                  {approve.busy ? "Approving…" : `Approve Aqua to draw ${needsApproval.symbol}`}
+                </Button>
+              ) : (
+                <Button
+                  disabled={
+                    !strategy ||
+                    ship.busy ||
+                    enriched.some((l) => toRaw(Number(backing[l.symbol]) || 0, l.decimals) < l.amount)
+                  }
+                  onClick={() =>
+                    ship.send({
+                      address: deployed.aqua,
+                      abi: aquaAbi,
+                      functionName: "ship",
+                      args: [
+                        deployed.optionsManager,
+                        strategy!,
+                        enriched.map((l) => l.token),
+                        enriched.map((l) => toRaw(Number(backing[l.symbol]) || 0, l.decimals)),
+                      ],
+                    })
+                  }
+                >
+                  {ship.busy ? "Shipping…" : `Ship offer #${nextFree.index}${enriched.length > 1 ? " (both legs)" : ""}`}
+                </Button>
+              )}
+
+              <Note>
+                <strong className="text-foreground">Nothing leaves your wallet.</strong> Aqua registers the
+                balance as backing; the tokens stay yours, stay liquid, and can back other Aqua strategies at
+                the same time.
+                {enriched.length > 1 && " This range straddles spot, so both legs are registered in one offer."}
+              </Note>
+            </>
+          )}
         </>
       ) : (
         <>
           <Button
-            disabled={liquidity === 0n || write.busy}
+            disabled={liquidity === 0n || write.busy || !salt}
             onClick={() =>
               write.send({
                 address: deployed.optionsManager,
                 abi: optionsManagerAbi,
                 functionName: "sellOptionViaAqua",
-                args: [address!, strikeIndex, isPut, liquidity, OFFER_SALT],
+                args: [address!, strikeIndex, isPut, liquidity, salt!],
               })
             }
           >

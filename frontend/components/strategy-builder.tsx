@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useAccount, useReadContract } from "wagmi";
+import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { maxUint256 } from "viem";
 import { Plus, X } from "lucide-react";
 
@@ -16,7 +16,8 @@ import { TxNote, useTx } from "@/components/tx";
 import { cn } from "@/lib/utils";
 
 import { aquaAbi, erc20Abi, optionsManagerAbi } from "@/lib/abi";
-import { deployed, OFFER_SALT, STRIKE_INDICES, strikeLabel, USDC_DECIMALS, WETH_DECIMALS } from "@/lib/config";
+import { deployed, STRIKE_INDICES, strikeLabel, WETH_DECIMALS } from "@/lib/config";
+import { useAquaOffers } from "@/lib/aqua";
 import { fmt, legPnlAtPrice, liquidityForAmount0, tickToUsdPrice, usdPriceToTick } from "@/lib/options";
 import { useSeries, useSpotTick } from "@/lib/useMarket";
 import type { HlPosition, StrategyTemplate } from "@/lib/hyperliquid";
@@ -345,22 +346,15 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
   const write = useTx();
   const buy = useTx();
 
-  const { data: strategy } = useReadContract({
-    address: deployed.optionsManager,
-    abi: optionsManagerAbi,
-    functionName: "encodeAquaStrategy",
-    args: address ? [address, OFFER_SALT] : undefined,
-    query: { enabled: !!address },
-  });
-  const { data: usdcBacking } = useReadContract({
-    address: deployed.optionsManager,
-    abi: optionsManagerAbi,
-    functionName: "aquaBackingOf",
-    args: address ? [address, OFFER_SALT, deployed.usdc] : undefined,
-    query: { enabled: !!address },
-  });
   const { data: usdcAllowance } = useReadContract({
     address: deployed.usdc,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: address ? [address, deployed.aqua] : undefined,
+    query: { enabled: !!address },
+  });
+  const { data: wethAllowance } = useReadContract({
+    address: deployed.weth,
     abi: erc20Abi,
     functionName: "allowance",
     args: address ? [address, deployed.aqua] : undefined,
@@ -405,13 +399,78 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
   const sellLegs = useMemo(() => toContractLegs(sells), [sells, rows, tick]);
   const buyLegs = useMemo(() => toContractLegs(buys), [buys, rows, tick]);
 
+  /**
+   * What the written legs will actually pull, quoted by the contract and summed.
+   *
+   * Summed, because every leg of a `sellStrategy` draws on the SAME offer — that is the whole
+   * capital-efficiency claim, and it also means a spread needs the TOTAL backed, not the biggest
+   * leg. Quoted rather than estimated, because an Aqua strategy is immutable: an offer a wei short
+   * cannot be topped up, only abandoned.
+   */
+  const { data: quotes } = useReadContracts({
+    contracts: sellLegs.map(
+      (l) =>
+        ({
+          address: deployed.optionsManager,
+          abi: optionsManagerAbi,
+          functionName: "collateralFor",
+          args: [l.strikeIndex, l.isPut, l.liquidity],
+        }) as const,
+    ),
+    query: { enabled: sellLegs.length > 0 },
+  });
+
+  const need = useMemo(() => {
+    let weth = 0n;
+    let usdc = 0n;
+    for (const q of quotes ?? []) {
+      const r = q?.result as readonly [bigint, bigint] | undefined;
+      if (!r) continue;
+      weth += r[0];
+      usdc += r[1];
+    }
+    return { weth, usdc };
+  }, [quotes]);
+
+  const { covering, nextFree, refetch: refetchOffers } = useAquaOffers(address, need);
+
+  const { data: strategy } = useReadContract({
+    address: deployed.optionsManager,
+    abi: optionsManagerAbi,
+    functionName: "encodeAquaStrategy",
+    args: address && nextFree ? [address, nextFree.salt] : undefined,
+    query: { enabled: !!address && !!nextFree },
+  });
+
+  const shipped = ship.isSuccess;
+  const wrote = write.isSuccess;
+  useEffect(() => {
+    if (shipped || wrote) refetchOffers();
+  }, [shipped, wrote, refetchOffers]);
+
   if (legs.length === 0) return null;
   if (!isConnected) return <CardNote>Connect a wallet to execute this structure.</CardNote>;
 
-  const needsApproval = (usdcAllowance ?? 0n) === 0n;
+  // Ship both currencies whenever the structure touches both — one offer, two tokens.
+  const shipTokens = ([] as `0x${string}`[]).concat(
+    need.weth > 0n ? [deployed.weth] : [],
+    need.usdc > 0n ? [deployed.usdc] : [],
+  );
+  // 10x the structure, so the seller can rebuild it a few times before shipping the next offer.
+  const shipAmounts = ([] as bigint[]).concat(
+    need.weth > 0n ? [need.weth * 10n] : [],
+    need.usdc > 0n ? [need.usdc * 10n] : [],
+  );
+
+  const needsApproval =
+    need.weth > 0n && (wethAllowance ?? 0n) < need.weth * 10n
+      ? { token: deployed.weth, symbol: "WETH" }
+      : need.usdc > 0n && (usdcAllowance ?? 0n) < need.usdc * 10n
+        ? { token: deployed.usdc, symbol: "USDC" }
+        : undefined;
   const needsManagerApproval =
     (mgrUsdc ?? 0n) === 0n ? deployed.usdc : (mgrWeth ?? 0n) === 0n ? deployed.weth : undefined;
-  const hasBacking = (usdcBacking ?? 0n) > 0n;
+  const hasBacking = !!covering;
 
   return (
     <div className="flex flex-col gap-3">
@@ -422,28 +481,30 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
               disabled={approveUsdc.busy}
               onClick={() =>
                 approveUsdc.send({
-                  address: deployed.usdc,
+                  address: needsApproval.token,
                   abi: erc20Abi,
                   functionName: "approve",
                   args: [deployed.aqua, maxUint256],
                 })
               }
             >
-              {approveUsdc.busy ? "Approving…" : "Approve Aqua to draw USDC"}
+              {approveUsdc.busy ? "Approving…" : `Approve Aqua to draw ${needsApproval.symbol}`}
             </Button>
           ) : !hasBacking ? (
             <Button
-              disabled={!strategy || ship.busy}
+              disabled={!strategy || ship.busy || shipTokens.length === 0}
               onClick={() =>
                 ship.send({
                   address: deployed.aqua,
                   abi: aquaAbi,
                   functionName: "ship",
-                  args: [deployed.optionsManager, strategy!, [deployed.usdc], [200_000n * 10n ** BigInt(USDC_DECIMALS)]],
+                  args: [deployed.optionsManager, strategy!, shipTokens, shipAmounts],
                 })
               }
             >
-              {ship.busy ? "Shipping…" : "Back the structure with one Aqua offer"}
+              {ship.busy
+                ? "Shipping…"
+                : `Back the structure with one Aqua offer${shipTokens.length > 1 ? " (both tokens)" : ""}`}
             </Button>
           ) : (
             <Button
@@ -454,7 +515,7 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
                   address: deployed.optionsManager,
                   abi: optionsManagerAbi,
                   functionName: "sellStrategy",
-                  args: [address!, sellLegs, OFFER_SALT],
+                  args: [address!, sellLegs, covering!.salt],
                 })
               }
             >
