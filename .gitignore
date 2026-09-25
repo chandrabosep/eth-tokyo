@@ -2,4 +2,9 @@ out/
 cache/
 broadcast/
 .env
+.env.local
 .DS_Store
+node_modules/
+frontend/.next/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo

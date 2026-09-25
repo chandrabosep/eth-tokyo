@@ -1,0 +1,82 @@
+/* Recycled — design tokens
+ * Hallmark · studied-DNA (source: tactile accounting-dashboard reference)
+ *
+ * Portable token layer. Every colour, radius, shadow and easing used anywhere
+ * in the app resolves through a name declared here; no component inlines a raw
+ * OKLCH, hex or rgb value.
+ *
+ * Values are bare OKLCH components (no `oklch()` wrapper) so Tailwind can
+ * compose them with an alpha channel: `oklch(var(--color-ink) / 0.14)`.
+ */
+
+:root {
+  /* ---- Surface -------------------------------------------------------- */
+  /* Neither end is pure. #fff paper and #000 cards read flat and synthetic,
+     so both are tinted toward the green anchor. */
+  --color-paper: 98.4% 0.006 140;
+  --color-paper-2: 96.4% 0.009 140;
+  --color-paper-3: 93.2% 0.012 140;
+  /* Nothing here is black. Ink is a deep slate-green at 30% L: it is
+     simultaneously the text, the border source and the shadow, so a very dark
+     value made every edge in the app compete with the data. */
+  --color-ink: 30% 0.02 155;
+  --color-ink-2: 38% 0.018 155;
+  --color-ink-soft: 46% 0.015 155; /* body copy, labels */
+  --color-ink-faint: 58% 0.012 155; /* disabled / empty-state only */
+
+  /* The outline and the shadow do different jobs. The shadow separates the
+     surface from the page; the border only closes the shape, so it drops to a
+     near-paper hairline and lets the shadow carry the separation. */
+  --color-line: 89% 0.013 150;
+  --color-line-2: 82% 0.015 150;
+
+  /* ---- Accents --------------------------------------------------------- */
+  /* Lime carries calls, periwinkle carries puts — two opposed sides of one
+     number, which is the job the reference gives its inflow/outflow pair. */
+  --color-lime: 86% 0.19 128;
+  --color-lime-deep: 72% 0.17 130;
+  --color-lime-wash: 95.5% 0.06 128;
+  --color-peri: 74% 0.13 285;
+  --color-peri-deep: 62% 0.15 285;
+  --color-peri-wash: 95% 0.035 285;
+  --color-flag: 82% 0.16 75; /* caution / straddling-spot */
+  --color-danger: 58% 0.2 25;
+
+  /* ---- Elevation ------------------------------------------------------- */
+  /* Solid offset, zero blur. The hard edge is what makes a surface read as
+     cut out and placed rather than floated. */
+  --shadow-xs: 2px 2px 0 0 oklch(var(--color-ink));
+  --shadow-sm: 3px 3px 0 0 oklch(var(--color-ink));
+  --shadow-md: 5px 5px 0 0 oklch(var(--color-ink));
+  --shadow-lg: 7px 7px 0 0 oklch(var(--color-ink));
+
+  /* ---- Geometry -------------------------------------------------------- */
+  --radius: 1.25rem;
+  --radius-sm: 0.625rem;
+  --radius-pill: 999px;
+  --rule: 1.5px;
+  --rule-heavy: 2px;
+
+  /* ---- Space (4pt) ----------------------------------------------------- */
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+
+  /* ---- Type ------------------------------------------------------------ */
+  /* Single family, weight-split — the reference's own discipline. Mono is
+     confined to hashes, addresses and raw integers. */
+  --font-display: var(--font-outfit);
+  --font-body: var(--font-outfit);
+  --font-mono: var(--font-mono);
+
+  /* ---- Motion ---------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+}

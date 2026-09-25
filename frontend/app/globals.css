@@ -1,0 +1,211 @@
+/* Hallmark · genre: playful (tactile variant) · macrostructure: Bento Grid
+ * theme: studied-DNA (source: image — tactile accounting dashboard)
+ * paper: oklch(98.4% 0.006 140) · ink: oklch(18% 0.015 150)
+ * accents: lime oklch(86% 0.19 128) + periwinkle oklch(74% 0.13 285)
+ * display: Outfit 800 (roman) · body: Outfit 400/500 · mono: JetBrains Mono (hashes only)
+ * nav: N6 masthead + tab rail · footer: none (app shell)
+ * enrichment: none — typography + surface only
+ * pre-emit critique: P5 H5 E4 S5 R4 V5
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ---- Surface -------------------------------------------------------
+     * Nothing here is black. Ink sits at 30% lightness with real green
+     * chroma — a deep slate-green, not a neutral near-black. Two reasons:
+     * pure or near-pure black reads flat and synthetic, and because ink is
+     * simultaneously the border, the shadow AND the dark surface colour, a
+     * very dark value made every edge in the app shout for attention. At 30%
+     * the structure still reads clearly but stops competing with the data.
+     * Paper is tinted the same direction so the two ends belong together.
+     */
+    --color-paper: 98.4% 0.006 140;
+    --color-paper-2: 96.4% 0.009 140;
+    --color-paper-3: 93.2% 0.012 140;
+    --color-ink: 30% 0.02 155;
+    --color-ink-2: 38% 0.018 155;
+    --color-ink-soft: 46% 0.015 155;
+    --color-ink-faint: 58% 0.012 155;
+
+    /* ---- Hairline --------------------------------------------------------
+     * The outline and the shadow do different jobs. The shadow separates the
+     * surface from the page and stays full-strength ink; the border only has
+     * to close the shape. Drawing both in ink made every card read as a heavy
+     * outlined box, so the border drops to a near-paper hairline and lets the
+     * shadow carry the separation on its own.
+     */
+    --color-line: 89% 0.013 150;
+    --color-line-2: 82% 0.015 150; /* internal dividers that must still read */
+
+    /* ---- Accents -------------------------------------------------------
+     * Lime carries calls, periwinkle carries puts. The pairing comes from
+     * the reference's inflow/outflow cards, where the two colours are
+     * doing exactly this job: naming two opposed sides of one number.
+     */
+    --color-lime: 86% 0.19 128;
+    --color-lime-deep: 72% 0.17 130;
+    --color-lime-wash: 95.5% 0.06 128;
+    --color-peri: 74% 0.13 285;
+    --color-peri-deep: 62% 0.15 285;
+    --color-peri-wash: 95% 0.035 285;
+    /* Amber is the only hue left that carries no meaning here: lime is calls,
+       periwinkle is puts, so a spot marker in either would read as taking a
+       side. Warm gold sits well clear of both on the wheel. */
+    --color-flag: 84% 0.155 80;
+    --color-flag-deep: 68% 0.15 72;
+    --color-danger: 58% 0.2 25;
+
+    /* shadcn semantic aliases, mapped onto the above */
+    --background: var(--color-paper);
+    --foreground: var(--color-ink);
+    --card: 99.4% 0.004 140;
+    --card-foreground: var(--color-ink);
+    --popover: var(--color-paper);
+    --popover-foreground: var(--color-ink);
+    --primary: var(--color-ink);
+    --primary-foreground: var(--color-paper);
+    --secondary: var(--color-paper-2);
+    --secondary-foreground: var(--color-ink);
+    --muted: var(--color-paper-2);
+    --muted-foreground: var(--color-ink-soft);
+    --accent: var(--color-lime);
+    --accent-foreground: var(--color-ink);
+    --destructive: var(--color-danger);
+    --destructive-foreground: 98% 0.006 25;
+    --border: var(--color-line);
+    --input: var(--color-line);
+    --ring: var(--color-lime-deep);
+
+    /* ---- The signature -------------------------------------------------
+     * Solid offset, zero blur. A blurred shadow would read as generic
+     * material elevation; the hard edge is what makes a surface feel cut
+     * out and placed rather than floated. Drawn in ink, so lightening ink
+     * softens every shadow in the app at once.
+     */
+    --shadow-xs: 2px 2px 0 0 oklch(var(--color-ink));
+    --shadow-sm: 3px 3px 0 0 oklch(var(--color-ink));
+    --shadow-md: 5px 5px 0 0 oklch(var(--color-ink));
+    --shadow-lg: 7px 7px 0 0 oklch(var(--color-ink));
+
+    --radius: 1.25rem;
+    --radius-sm: 0.625rem;
+    --radius-pill: 999px;
+
+    --rule: 1.5px;
+    --rule-heavy: 2px;
+
+    /* 4pt scale */
+    --space-2xs: 0.25rem;
+    --space-xs: 0.5rem;
+    --space-sm: 0.75rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+    --space-xl: 2.5rem;
+    --space-2xl: 4rem;
+
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --dur-fast: 120ms;
+    --dur-base: 180ms;
+  }
+}
+
+@layer base {
+  * {
+    border-color: oklch(var(--color-ink) / 0.14);
+  }
+
+  html,
+  body {
+    /* clip, never hidden — hidden kills position: sticky inside the tree */
+    overflow-x: clip;
+  }
+
+  body {
+    background: oklch(var(--color-paper));
+    color: oklch(var(--color-ink));
+    /* The reference bleeds a faint green from the corners. Two very wide,
+       very low-alpha radials read as light in the room, not as a blob. */
+    background-image:
+      radial-gradient(120rem 60rem at -10% -20%, oklch(var(--color-lime) / 0.16), transparent 60%),
+      radial-gradient(100rem 50rem at 110% 0%, oklch(var(--color-peri) / 0.1), transparent 55%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Prices, ticks and sizes must align down the column or the chain is
+     unreadable. Applied broadly rather than per-cell. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-style: normal;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+}
+
+@layer components {
+  /* One reusable tactile surface. Every card, panel and control derives
+     from this so the offset stays consistent across the app. */
+  .tactile {
+    border: var(--rule) solid oklch(var(--color-ink));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+  }
+
+  .tactile-sm {
+    border: var(--rule) solid oklch(var(--color-ink));
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Press = travel along the shadow's axis until it closes. The button
+     looks physically pushed into the page rather than merely dimmed. */
+  .press {
+    transition:
+      transform var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .press:active:not(:disabled) {
+    transform: translate(3px, 3px);
+    box-shadow: var(--shadow-xs);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .press {
+      transition: none;
+    }
+    .press:active:not(:disabled) {
+      transform: none;
+    }
+  }
+}
+
+/* Spatial motion collapses to a short crossfade. Covers the sheet's slide
+   keyframes, which are the only transform animations in the app. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.12s !important;
+    animation-timing-function: linear !important;
+    transition-duration: 0.12s !important;
+  }
+
+  [data-state="open"],
+  [data-state="closed"] {
+    animation-name: none !important;
+  }
+}
