@@ -13,6 +13,7 @@ import {Currency} from "v4-core/types/Currency.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {FixedPoint128} from "v4-core/libraries/FixedPoint128.sol";
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
@@ -51,7 +52,7 @@ contract OptionsManagerTest is Test {
     address internal buyer = makeAddr("buyer");
     address internal swapper = makeAddr("swapper");
 
-    uint24 internal constant FEE = 3000; // 0.30%
+    uint24 internal constant FEE = LPFeeLibrary.DYNAMIC_FEE_FLAG; // 0.30%
     int24 internal constant TICK_SPACING = 60;
     int24 internal constant STRIKE_WIDTH = 120;
 
@@ -77,7 +78,8 @@ contract OptionsManagerTest is Test {
         currency1 = Currency.wrap(address(token1));
 
         // Mine a hook address carrying the beforeAddLiquidity + beforeRemoveLiquidity flags.
-        uint160 flags = uint160(Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG);
+        uint160 flags =
+            uint160(Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_FLAG);
         (address hookAddr, bytes32 salt) =
             HookMiner.find(address(this), flags, type(OptionsHook).creationCode, abi.encode(poolManager, address(this)));
         hook = new OptionsHook{salt: salt}(poolManager, address(this));
@@ -162,6 +164,7 @@ contract OptionsManagerTest is Test {
         uint160 addr = uint160(address(hook));
         assertTrue(addr & Hooks.BEFORE_ADD_LIQUIDITY_FLAG != 0, "missing beforeAddLiquidity flag");
         assertTrue(addr & Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG != 0, "missing beforeRemoveLiquidity flag");
+        assertTrue(addr & Hooks.BEFORE_SWAP_FLAG != 0, "must intercept swaps to price the spread");
     }
 
     /// @notice Only OptionsManager may be an LP here — that is what makes "all liquidity is a
@@ -504,9 +507,68 @@ contract OptionsManagerTest is Test {
     // The hook prices premium: utilisation -> LP fee
     // -------------------------------------------------------------------------------------
 
+    /// @notice The answer to "what does the hook actually do". Premium in this protocol IS the LP
+    ///         fee, so the hook turning utilisation into that fee is the pricing mechanism itself.
+    function test_hook_feeRisesWithUtilisation() public {
+        assertEq(hook.utilisationBps(), 0, "nothing written yet");
+        assertEq(hook.currentFee(), hook.BASE_FEE(), "empty book charges the base fee");
+
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+        assertEq(hook.currentFee(), hook.BASE_FEE(), "written but untouched is still base");
+
+        // Half the book bought out -> half the spread.
+        vm.prank(buyer);
+        options.buyOption(IDX_SPOT, true, WRITE_LIQUIDITY / 2);
+        assertEq(hook.utilisationBps(), 5_000, "half the written book is out on loan");
+        uint24 half = hook.currentFee();
+        assertEq(half, hook.BASE_FEE() + (hook.MAX_FEE() - hook.BASE_FEE()) / 2, "fee should be midway");
+
+        // Fully bought out -> the ceiling.
+        vm.prank(buyer);
+        options.buyOption(IDX_SPOT, true, WRITE_LIQUIDITY / 2);
+        assertEq(hook.utilisationBps(), 10_000);
+        assertEq(hook.currentFee(), hook.MAX_FEE(), "a fully-lent book charges the ceiling");
+
+        // Unwinding gives the spread back.
+        vm.prank(buyer);
+        options.closeLong(IDX_SPOT, true, WRITE_LIQUIDITY);
+        assertEq(hook.utilisationBps(), 0);
+        assertEq(hook.currentFee(), hook.BASE_FEE());
+        assertGt(half, hook.BASE_FEE(), "test is vacuous if the spread never moved");
+    }
+
     // -------------------------------------------------------------------------------------
     // Volatility — the other half of the price
     // -------------------------------------------------------------------------------------
+
+    /// @notice And the fee is not cosmetic — swappers actually pay it, so writers actually earn it.
+    function test_hook_utilisationSpreadIsPaidByRealSwaps() public {
+        uint256 shortId = options.tokenIdFor(IDX_SPOT, true, false);
+
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+        _churn();
+        _churn();
+        (, uint256 baseFeePremium) = options.accruedPremium(seller, shortId);
+
+        // Same churn again, but with the book heavily bought out so the hook widens the fee.
+        vm.prank(buyer);
+        options.buyOption(IDX_SPOT, true, (WRITE_LIQUIDITY * 9) / 10);
+        assertEq(hook.utilisationBps(), 9_000);
+
+        (, uint256 before1) = options.accruedPremium(seller, shortId);
+        _churn();
+        _churn();
+        (, uint256 after1) = options.accruedPremium(seller, shortId);
+        uint256 widePremium = after1 - before1;
+
+        assertGt(baseFeePremium, 0, "base-fee churn should have earned something");
+        assertGt(widePremium, 0, "wide-fee churn should have earned something");
+        // Same liquidity, same swaps, higher fee -> more premium per unit of remaining liquidity.
+        console2.log("premium per churn at base fee :", baseFeePremium);
+        console2.log("premium per churn at 90% util :", widePremium);
+    }
 
     // -------------------------------------------------------------------------------------
     // One Aqua balance, many legs

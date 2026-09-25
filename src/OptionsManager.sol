@@ -19,6 +19,10 @@ import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {PositionId} from "./libraries/PositionId.sol";
 import {IAqua} from "./interfaces/IAqua.sol";
 
+interface IOptionsHook {
+    function setUtilisation(uint16 bps) external;
+}
+
 /// @title OptionsManager
 /// @notice A perpetual options market built by *reusing* Uniswap v4 liquidity instead of
 ///         bootstrapping an options order book.
@@ -125,6 +129,10 @@ contract OptionsManager is ERC1155, IUnlockCallback {
 
     mapping(uint256 tokenId => Series) public series;
 
+    /// @notice Market-wide open interest, kept as running totals so the hook can price the
+    ///         utilisation spread from one storage read instead of walking every series.
+    uint256 public totalShortLiquidity;
+    uint256 public totalLongLiquidity;
     mapping(address owner => mapping(uint256 tokenId => Position)) internal _positions;
 
     // ---------------------------------------------------------------------------------------
@@ -177,6 +185,22 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         hooks = key.hooks;
         strikeWidth = strikeWidth_;
         strikeTicks = strikeTicks_;
+    }
+
+    /// @dev Recompute market utilisation and hand it to the hook, which turns it into this pool's
+    ///      LP fee — and therefore into the premium writers earn. Called after every open interest
+    ///      change. Wrapped in a try so a hook that is not wired yet (tests that deploy the manager
+    ///      standalone) cannot brick trading.
+    function _syncUtilisation() internal {
+        uint256 short_ = totalShortLiquidity;
+        uint16 bps = short_ == 0 ? 0 : uint16((totalLongLiquidity * BPS) / short_);
+        try IOptionsHook(address(hooks)).setUtilisation(bps) {} catch {}
+    }
+
+    /// @notice Share of the written book currently bought out, in basis points.
+    function utilisationBps() public view returns (uint16) {
+        uint256 short_ = totalShortLiquidity;
+        return short_ == 0 ? 0 : uint16((totalLongLiquidity * BPS) / short_);
     }
 
     function poolKey() public view returns (PoolKey memory) {
@@ -636,9 +660,11 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         p.amount0 += owed0;
         p.amount1 += owed1;
         series[tokenId].shortLiquidity += d.liquidity;
+        totalShortLiquidity += d.liquidity;
 
         _mint(d.user, tokenId, d.liquidity, "");
         emit OptionWritten(d.user, tokenId, d.liquidity, owed0, owed1);
+        _syncUtilisation();
     }
 
     function _doBuy(CallbackData memory d) internal {
@@ -675,9 +701,11 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         p.collateral0 += collateral0;
         p.collateral1 += collateral1;
         s.longLiquidity += d.liquidity;
+        totalLongLiquidity += d.liquidity;
 
         _mint(d.user, longId, d.liquidity, "");
         emit OptionBought(d.user, longId, d.liquidity, notional0, notional1);
+        _syncUtilisation();
     }
 
     function _doCloseShort(CallbackData memory d) internal {
@@ -715,12 +743,14 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         p.amount1 -= (p.amount1 * fraction) / 1e18;
         p.liquidity -= d.liquidity;
         s.shortLiquidity -= d.liquidity;
+        totalShortLiquidity -= d.liquidity;
 
         _burn(d.user, tokenId, d.liquidity);
 
         _pay(currency0, d.user, out0);
         _pay(currency1, d.user, out1);
         emit ShortClosed(d.user, tokenId, d.liquidity, out0, out1);
+        _syncUtilisation();
     }
 
     function _doCloseLong(CallbackData memory d) internal {
@@ -772,12 +802,14 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         p.collateral1 -= collateral1;
         p.liquidity -= d.liquidity;
         series[shortId].longLiquidity -= d.liquidity;
+        totalLongLiquidity -= d.liquidity;
 
         _burn(d.user, longId, d.liquidity);
 
         _pay(currency0, d.user, out0);
         _pay(currency1, d.user, out1);
         emit LongClosed(d.user, longId, d.liquidity, out0, out1);
+        _syncUtilisation();
     }
 
     /// @dev Long payoff for one currency leg.
