@@ -140,6 +140,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
     error NoPosition();
     error PositionTooLarge(uint128 held, uint128 requested);
     error LongStillSolvent();
+    error EmptyStrategy();
 
     event OptionWritten(
         address indexed seller, uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1
@@ -150,6 +151,8 @@ contract OptionsManager is ERC1155, IUnlockCallback {
     event ShortClosed(address indexed seller, uint256 indexed tokenId, uint128 liquidity, uint256 paid0, uint256 paid1);
     event LongClosed(address indexed buyer, uint256 indexed tokenId, uint128 liquidity, uint256 paid0, uint256 paid1);
     event LongLiquidated(address indexed keeper, address indexed buyer, uint256 indexed tokenId, uint128 liquidity);
+    event StrategyWritten(address indexed maker, uint256 legs, bytes32 aquaSalt);
+    event StrategyBought(address indexed buyer, uint256 legs);
 
     // ---------------------------------------------------------------------------------------
     // Construction
@@ -402,6 +405,73 @@ contract OptionsManager is ERC1155, IUnlockCallback {
                 })
             )
         );
+    }
+
+    /// @notice One leg of a multi-leg structure.
+    struct Leg {
+        uint8 strikeIndex;
+        bool isPut;
+        uint128 liquidity;
+    }
+
+    /// @notice Write a whole structure — spread, strangle, condor — in one transaction, every leg
+    ///         funded from the SAME Aqua offer.
+    ///
+    /// @dev This is the capital-efficiency claim made concrete, and it only works because the Aqua
+    ///      strategy is scoped to the market rather than to a series. The seller ships one balance;
+    ///      these legs draw from it in sequence; Aqua caps the total at the registered amount. A
+    ///      four-leg condor therefore commits ONE number of the seller's own wallet balance, not
+    ///      four deposits into four vaults — and until a leg is actually written, none of it has
+    ///      moved.
+    ///
+    ///      Atomic at the transaction level: any leg that cannot be funded reverts the whole
+    ///      structure, so a partially-built spread is not a reachable state.
+    function sellStrategy(address maker, Leg[] calldata legs, bytes32 salt) external {
+        require(legs.length != 0, EmptyStrategy());
+        for (uint256 i = 0; i < legs.length; i++) {
+            require(legs[i].liquidity != 0, ZeroLiquidity());
+            poolManager.unlock(
+                abi.encode(
+                    CallbackData({
+                        action: Action.SELL,
+                        user: maker,
+                        strikeIndex: legs[i].strikeIndex,
+                        isPut: legs[i].isPut,
+                        liquidity: legs[i].liquidity,
+                        viaAqua: true,
+                        aquaSalt: salt
+                    })
+                )
+            );
+        }
+        emit StrategyWritten(maker, legs.length, salt);
+    }
+
+    /// @notice Buy several legs in one transaction.
+    ///
+    /// @dev The mirror of `sellStrategy` for the taker side. Buyers do not route through Aqua — a
+    ///      taker posts collateral directly rather than registering standing backing — but they
+    ///      still need the legs to land together: a protective spread that half-fills is not the
+    ///      position anyone asked for. Any leg that cannot be filled reverts the whole structure.
+    function buyStrategy(Leg[] calldata legs) external {
+        require(legs.length != 0, EmptyStrategy());
+        for (uint256 i = 0; i < legs.length; i++) {
+            require(legs[i].liquidity != 0, ZeroLiquidity());
+            poolManager.unlock(
+                abi.encode(
+                    CallbackData({
+                        action: Action.BUY,
+                        user: msg.sender,
+                        strikeIndex: legs[i].strikeIndex,
+                        isPut: legs[i].isPut,
+                        liquidity: legs[i].liquidity,
+                        viaAqua: false,
+                        aquaSalt: bytes32(0)
+                    })
+                )
+            );
+        }
+        emit StrategyBought(msg.sender, legs.length);
     }
 
     /// @notice Buy an option: pull previously-written liquidity out of the pool. You are now long.

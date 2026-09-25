@@ -512,6 +512,136 @@ contract OptionsManagerTest is Test {
     // One Aqua balance, many legs
     // -------------------------------------------------------------------------------------
 
+    /// @notice The answer to "why do you need 1inch". One shipped wallet balance backs a whole
+    ///         multi-leg structure; without a market-scoped registry each leg needs its own vault.
+    function test_aqua_oneBalanceBacksAMultiLegSpread() public {
+        uint256 shipped = 100_000e18;
+        _shipMarket(seller, address(token1), shipped);
+
+        uint256 walletBefore = token1.balanceOf(seller);
+
+        // A put spread: short the nearer strike, short the further one too. Two legs, one offer.
+        OptionsManager.Leg[] memory legs = new OptionsManager.Leg[](2);
+        legs[0] = OptionsManager.Leg({strikeIndex: IDX_SPOT, isPut: true, liquidity: WRITE_LIQUIDITY});
+        legs[1] = OptionsManager.Leg({strikeIndex: 0, isPut: true, liquidity: WRITE_LIQUIDITY});
+
+        vm.prank(buyer); // a matcher, not the seller
+        options.sellStrategy(seller, legs, OFFER_SALT);
+
+        uint256 drawn = walletBefore - token1.balanceOf(seller);
+        assertGt(drawn, 0, "the structure should have drawn collateral");
+
+        // Both legs exist, funded from the same registered balance.
+        assertEq(options.balanceOf(seller, options.tokenIdFor(IDX_SPOT, true, false)), WRITE_LIQUIDITY);
+        assertEq(options.balanceOf(seller, options.tokenIdFor(0, true, false)), WRITE_LIQUIDITY);
+
+        // One offer, decremented once by the total. This is the capital-efficiency claim.
+        assertEq(
+            options.aquaBackingOf(seller, OFFER_SALT, currency1),
+            shipped - drawn,
+            "both legs must draw from the same offer"
+        );
+    }
+
+    /// @notice A strangle needs both tokens; one offer can register both and back both legs.
+    function test_aqua_oneOfferBacksATwoCurrencyStrangle() public {
+        bytes memory strategy = options.encodeAquaStrategy(seller, OFFER_SALT);
+        address[] memory tokens = new address[](2);
+        uint256[] memory amounts = new uint256[](2);
+        tokens[0] = address(token0);
+        tokens[1] = address(token1);
+        amounts[0] = 500e18;
+        amounts[1] = 100_000e18;
+        vm.prank(seller);
+        aqua.ship(address(options), strategy, tokens, amounts);
+
+        // Short put below spot (USDC) + short call above spot (WETH).
+        OptionsManager.Leg[] memory legs = new OptionsManager.Leg[](2);
+        legs[0] = OptionsManager.Leg({strikeIndex: 0, isPut: true, liquidity: WRITE_LIQUIDITY});
+        legs[1] = OptionsManager.Leg({strikeIndex: 2, isPut: false, liquidity: WRITE_LIQUIDITY});
+
+        vm.prank(buyer);
+        options.sellStrategy(seller, legs, OFFER_SALT);
+
+        assertEq(options.balanceOf(seller, options.tokenIdFor(0, true, false)), WRITE_LIQUIDITY, "put leg");
+        assertEq(options.balanceOf(seller, options.tokenIdFor(2, false, false)), WRITE_LIQUIDITY, "call leg");
+        assertLt(options.aquaBackingOf(seller, OFFER_SALT, currency0), 500e18, "WETH leg drew from the offer");
+        assertLt(options.aquaBackingOf(seller, OFFER_SALT, currency1), 100_000e18, "USDC leg drew from the offer");
+    }
+
+    function test_aqua_strategyCannotOverdrawTheOffer() public {
+        _shipMarket(seller, address(token1), 1e12); // far too little
+
+        OptionsManager.Leg[] memory legs = new OptionsManager.Leg[](2);
+        legs[0] = OptionsManager.Leg({strikeIndex: IDX_SPOT, isPut: true, liquidity: WRITE_LIQUIDITY});
+        legs[1] = OptionsManager.Leg({strikeIndex: 0, isPut: true, liquidity: WRITE_LIQUIDITY});
+
+        vm.prank(buyer);
+        vm.expectRevert();
+        options.sellStrategy(seller, legs, OFFER_SALT);
+
+        // Nothing partial survived.
+        assertEq(options.balanceOf(seller, options.tokenIdFor(IDX_SPOT, true, false)), 0, "no leg should exist");
+    }
+
+    /// @dev Ship a market-scoped offer: one balance, any number of legs.
+    function _shipMarket(address maker, address token, uint256 amount) internal {
+        bytes memory strategy = options.encodeAquaStrategy(maker, OFFER_SALT);
+        address[] memory tokens = new address[](1);
+        uint256[] memory amounts = new uint256[](1);
+        tokens[0] = token;
+        amounts[0] = amount;
+        vm.prank(maker);
+        aqua.ship(address(options), strategy, tokens, amounts);
+    }
+
+    /// @notice Buyers batch too: a protective spread that half-fills is not the position anyone
+    ///         asked for, so both legs land in one transaction or neither does.
+    function test_buyStrategy_fillsEveryLegInOneTransaction() public {
+        _shipMarket(seller, address(token1), 200_000e18);
+
+        OptionsManager.Leg[] memory written = new OptionsManager.Leg[](2);
+        written[0] = OptionsManager.Leg({strikeIndex: IDX_SPOT, isPut: true, liquidity: WRITE_LIQUIDITY});
+        written[1] = OptionsManager.Leg({strikeIndex: 0, isPut: true, liquidity: WRITE_LIQUIDITY});
+        vm.prank(buyer);
+        options.sellStrategy(seller, written, OFFER_SALT);
+
+        uint128 take = WRITE_LIQUIDITY / 2;
+        OptionsManager.Leg[] memory bought = new OptionsManager.Leg[](2);
+        bought[0] = OptionsManager.Leg({strikeIndex: IDX_SPOT, isPut: true, liquidity: take});
+        bought[1] = OptionsManager.Leg({strikeIndex: 0, isPut: true, liquidity: take});
+
+        uint256 paid = token1.balanceOf(buyer);
+        vm.prank(buyer);
+        options.buyStrategy(bought);
+        paid -= token1.balanceOf(buyer);
+
+        assertEq(options.balanceOf(buyer, options.tokenIdFor(IDX_SPOT, true, true)), take, "near leg");
+        assertEq(options.balanceOf(buyer, options.tokenIdFor(0, true, true)), take, "far leg");
+        assertGt(paid, 0, "buyer posts collateral on both legs");
+    }
+
+    function test_buyStrategy_revertsWholeStructureIfALegCannotFill() public {
+        _shipMarket(seller, address(token1), 200_000e18);
+
+        // Only the spot strike is written; the far strike has nothing to buy.
+        OptionsManager.Leg[] memory written = new OptionsManager.Leg[](1);
+        written[0] = OptionsManager.Leg({strikeIndex: IDX_SPOT, isPut: true, liquidity: WRITE_LIQUIDITY});
+        vm.prank(buyer);
+        options.sellStrategy(seller, written, OFFER_SALT);
+
+        OptionsManager.Leg[] memory bought = new OptionsManager.Leg[](2);
+        bought[0] = OptionsManager.Leg({strikeIndex: IDX_SPOT, isPut: true, liquidity: WRITE_LIQUIDITY / 2});
+        bought[1] = OptionsManager.Leg({strikeIndex: 0, isPut: true, liquidity: WRITE_LIQUIDITY / 2});
+
+        vm.prank(buyer);
+        vm.expectRevert();
+        options.buyStrategy(bought);
+
+        // The fillable leg must not survive on its own.
+        assertEq(options.balanceOf(buyer, options.tokenIdFor(IDX_SPOT, true, true)), 0, "no partial fill");
+    }
+
     // -------------------------------------------------------------------------------------
     // Token id encoding
     // -------------------------------------------------------------------------------------
