@@ -26,10 +26,11 @@ export default function ChainPage() {
             tone: "ink",
             accent: true,
             value: spot ? `$${spot.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : undefined,
+            grow: 1.12,
           },
-          { label: "Pool tick", mono: true, value: tick !== undefined ? String(tick) : undefined },
-          { label: "Realised vol", tone: "lime", value: `${(pricing.realisedVolBps / 100).toFixed(1)}%` },
-          { label: "Utilisation", tone: "peri", value: `${utilisation.toFixed(0)}%` },
+          { label: "Pool tick", mono: true, value: tick !== undefined ? String(tick) : undefined, grow: 0.96 },
+          { label: "Realised vol", tone: "lime", value: `${(pricing.realisedVolBps / 100).toFixed(1)}%`, grow: 0.96 },
+          { label: "Utilisation", tone: "peri", value: `${utilisation.toFixed(0)}%`, grow: 0.96 },
         ]}
       />
 

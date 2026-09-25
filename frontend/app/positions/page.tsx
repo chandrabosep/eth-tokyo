@@ -62,14 +62,15 @@ function Positions() {
         title="Your positions"
         description="Premium is read live from the pool's own feeGrowthInside — real fees paid by real swappers, not a pricing model. A short earns it; a long pays it."
         stats={[
-          { label: "Open legs", tone: "lime", value: String(openCount) },
-          { label: "Short", value: String(shorts) },
-          { label: "Long", tone: "peri", value: String(openCount - shorts) },
+          { label: "Open legs", tone: "lime", value: String(openCount), grow: 0.96 },
+          { label: "Short", value: String(shorts), grow: 0.96 },
+          { label: "Long", tone: "peri", value: String(openCount - shorts), grow: 0.96 },
           {
             label: "Spot",
             tone: "ink",
             accent: true,
             value: tick !== undefined ? `$${fmt(tickToUsdPrice(tick), 2)}` : undefined,
+            grow: 1.12,
           },
         ]}
       />
