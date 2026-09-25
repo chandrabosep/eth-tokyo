@@ -18,7 +18,14 @@ import { cn } from "@/lib/utils";
 import { aquaAbi, erc20Abi, optionsManagerAbi } from "@/lib/abi";
 import { deployed, STRIKE_INDICES, strikeLabel, WETH_DECIMALS } from "@/lib/config";
 import { useAquaOffers } from "@/lib/aqua";
-import { fmt, legPnlAtPrice, liquidityForAmount0, tickToUsdPrice, usdPriceToTick } from "@/lib/options";
+import {
+  amount0ForLiquidity,
+  fmt,
+  legPnlAtPrice,
+  liquidityForAmount0,
+  tickToUsdPrice,
+  usdPriceToTick,
+} from "@/lib/options";
 import { useSeries, useSpotTick } from "@/lib/useMarket";
 import type { HlPosition, StrategyTemplate } from "@/lib/hyperliquid";
 
@@ -139,6 +146,32 @@ export function StrategyBuilder({
   const worstUnhedged = ladderRows.length ? Math.min(...ladderRows.map((r) => r.perp), 0) : 0;
   const worstHedged = ladderRows.length ? Math.min(...ladderRows.map((r) => r.total), 0) : 0;
 
+  /**
+   * How much of each bought leg the book can actually fill.
+   *
+   * A long here is not minted, it is REMOVED from written liquidity — so a buy is a claim on a
+   * position someone else already opened, and it is capped by what they wrote. A preset sized to
+   * the whole perp will routinely ask for more than exists at a thin strike, and the contract
+   * rightly refuses the lot. Surfacing the cap next to the leg is the difference between a builder
+   * that quotes a trade and one that quotes a trade you can do.
+   *
+   * Written legs are unconstrained: writing ADDS liquidity, so there is nothing to run out of.
+   */
+  const depth = useMemo(
+    () =>
+      legs.map((leg) => {
+        if (leg.side !== "buy") return undefined;
+        const row = rows.find((r) => r.strikeIndex === leg.strikeIndex && r.isPut === leg.isPut);
+        if (!row) return undefined;
+        const free = row.shortLiquidity - row.longLiquidity;
+        const eth =
+          amount0ForLiquidity(Number(free), row.tickLower, row.tickUpper) / 10 ** WETH_DECIMALS;
+        return { eth, short: leg.sizeEth > eth };
+      }),
+    [legs, rows],
+  );
+
+
   return (
     <Card className="flex flex-col p-0">
       <CardHeader>
@@ -168,6 +201,21 @@ export function StrategyBuilder({
                 <span className="ml-auto font-mono text-xs text-ink-soft tnum">
                   {fmt(leg.sizeEth, 4)} ETH
                 </span>
+                {depth[i]?.short && (
+                  <button
+                    className="rounded-pill border-rule border-line bg-destructive/12 px-2 py-0.5 font-mono text-[10.5px] font-bold tnum hover:bg-destructive/20"
+                    title="Only this much has been written at this strike. Click to resize the leg."
+                    onClick={() =>
+                      setLegs(
+                        legs.map((l, j) =>
+                          j === i ? { ...l, sizeEth: Math.max(depth[i]!.eth * 0.999, 0) } : l,
+                        ),
+                      )
+                    }
+                  >
+                    max {fmt(depth[i]!.eth, 4)}
+                  </button>
+                )}
                 <button
                   aria-label="Remove leg"
                   className="rounded-pill border-rule border-line bg-card p-1 shadow-xs hover:bg-paper-2"
@@ -236,6 +284,14 @@ export function StrategyBuilder({
                 structure, but it is not protection — check it is what you intended.
               </>
             )}
+          </CardNote>
+        )}
+
+        {depth.some((d) => d?.short) && (
+          <CardNote tone="danger">
+            <strong className="font-extrabold text-ink">Not enough written at that strike.</strong> Buying
+            here removes liquidity someone else wrote, so a long cannot exist before the matching short
+            does. Click the red cap on a leg to size it to what is available, or write the strike first.
           </CardNote>
         )}
 
@@ -399,6 +455,18 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
   const sellLegs = useMemo(() => toContractLegs(sells), [sells, rows, tick]);
   const buyLegs = useMemo(() => toContractLegs(buys), [buys, rows, tick]);
 
+  // A long is written liquidity handed over, so every bought leg is capped by the book. The
+  // contract enforces this and reverts the whole structure; checking here keeps a doomed buy from
+  // reaching the wallet at all.
+  const overBuy = useMemo(
+    () =>
+      buyLegs.filter((l) => {
+        const row = rows.find((r) => r.strikeIndex === l.strikeIndex && r.isPut === l.isPut);
+        return !row || l.liquidity > row.shortLiquidity - row.longLiquidity;
+      }),
+    [buyLegs, rows],
+  );
+
   /**
    * What the written legs will actually pull, quoted by the contract and summed.
    *
@@ -547,7 +615,7 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
           ) : (
             <Button
               variant="peri"
-              disabled={buyLegs.length === 0 || buy.busy}
+              disabled={buyLegs.length === 0 || buy.busy || overBuy.length > 0}
               onClick={() =>
                 buy.send({
                   address: deployed.optionsManager,
@@ -560,11 +628,19 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
               {buy.busy ? "Buying…" : `Buy ${buyLegs.length} leg${buyLegs.length > 1 ? "s" : ""} in one transaction`}
             </Button>
           )}
-          <CardNote>
-            Bought legs post collateral directly rather than registering Aqua backing — but they still land
-            together: any leg that cannot fill reverts the whole structure, so a half-built spread is not a
-            reachable state.
-          </CardNote>
+          {overBuy.length > 0 ? (
+            <CardNote tone="danger">
+              {overBuy.length === 1 ? "One leg asks" : `${overBuy.length} legs ask`} for more liquidity than
+              has been written at that strike, so the whole structure would revert. Resize with the red cap
+              on the leg, or write the strike first.
+            </CardNote>
+          ) : (
+            <CardNote>
+              Bought legs post collateral directly rather than registering Aqua backing — but they still land
+              together: any leg that cannot fill reverts the whole structure, so a half-built spread is not a
+              reachable state.
+            </CardNote>
+          )}
         </>
       )}
 

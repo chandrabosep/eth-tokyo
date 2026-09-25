@@ -53,6 +53,17 @@ export function liquidityForAmount0(amount0Raw: number, tickLower: number, tickU
 }
 
 /**
+ * Inverse of `liquidityForAmount0` — the range's full WETH capacity at `liquidity`.
+ *
+ * Used to turn written liquidity back into a size a trader recognises. A buy is a claim on
+ * liquidity someone else already wrote, so "how much of this can I actually buy" is a real limit,
+ * and it has to be quoted in the same unit the builder sizes legs in.
+ */
+export function amount0ForLiquidity(liquidity: number, tickLower: number, tickUpper: number): number {
+  return liquidity * (1 / sqrtPriceAtTick(tickLower) - 1 / sqrtPriceAtTick(tickUpper));
+}
+
+/**
  * Simplified net delta, in WETH.
  *
  * A concentrated position's WETH exposure at the current price IS its delta in the only sense that
