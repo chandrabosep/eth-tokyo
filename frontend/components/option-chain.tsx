@@ -1,7 +1,9 @@
 "use client";
 
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -10,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { STRIKE_INDICES, strikeLabel, USDC_DECIMALS, WETH_DECIMALS } from "@/lib/config";
 import { amountsForLiquidity, tickToUsdPrice } from "@/lib/options";
 import { useSeries, useSpotTick, type SeriesRow } from "@/lib/useMarket";
+import { PositionSheet, type Side } from "@/components/position-sheet";
 
 type ChainRow = {
   strikeIndex: number;
@@ -32,6 +35,7 @@ function notionalUsd(liquidity: bigint, row: SeriesRow, tick: number, spot: numb
 export function OptionChain() {
   const { rows, isLoading } = useSeries();
   const { tick } = useSpotTick();
+  const [sheet, setSheet] = useState<{ side: Side; strikeIndex: number } | null>(null);
 
   const spot = tick !== undefined ? tickToUsdPrice(tick) : undefined;
 
@@ -77,7 +81,7 @@ export function OptionChain() {
             {/* Calls own the left half, puts the right, the strike is the spine. */}
             <TableRow className="border-b-heavy border-line-2">
               <TableHead
-                colSpan={2}
+                colSpan={3}
                 className="bg-lime text-center text-[11px] font-extrabold tracking-[0.18em] text-ink"
               >
                 Calls
@@ -86,18 +90,20 @@ export function OptionChain() {
                 Strike
               </TableHead>
               <TableHead
-                colSpan={2}
+                colSpan={3}
                 className="bg-peri text-center text-[11px] font-extrabold tracking-[0.18em] text-ink"
               >
                 Puts
               </TableHead>
             </TableRow>
             <TableRow className="border-b-rule border-line">
+              <TableHead className="w-[108px] text-center">Actions</TableHead>
               <TableHead className="text-right">Bought</TableHead>
               <TableHead className="text-right">Written</TableHead>
               <TableHead className="w-[128px] border-x-rule border-line bg-paper-2 text-center">Price</TableHead>
               <TableHead className="text-left">Written</TableHead>
               <TableHead className="text-left">Bought</TableHead>
+              <TableHead className="w-[108px] text-center">Actions</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -110,6 +116,16 @@ export function OptionChain() {
                 <Fragment key={r.strikeIndex}>
                   {spotAbove && <SpotMarker spot={spot} tick={tick} />}
                   <TableRow className="group hover:bg-paper-2/70">
+                    <TableCell className={cn("text-center", r.callItm && "bg-lime-wash")}>
+                      <Button
+                        variant="call"
+                        size="xs"
+                        className="w-full"
+                        onClick={() => setSheet({ side: "call", strikeIndex: r.strikeIndex })}
+                      >
+                        Trade <ChevronRight className="!size-3" aria-hidden="true" />
+                      </Button>
+                    </TableCell>
                     <OiCell
                       value={notionalUsd(r.call.longLiquidity, r.call, tick, spot)}
                       align="right"
@@ -141,6 +157,16 @@ export function OptionChain() {
                       itm={r.putItm}
                       tone="put"
                     />
+                    <TableCell className={cn("text-center", r.putItm && "bg-peri-wash")}>
+                      <Button
+                        variant="put"
+                        size="xs"
+                        className="w-full"
+                        onClick={() => setSheet({ side: "put", strikeIndex: r.strikeIndex })}
+                      >
+                        <ChevronLeft className="!size-3" aria-hidden="true" /> Trade
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 </Fragment>
               );
@@ -153,6 +179,13 @@ export function OptionChain() {
         Open interest is shown as USD notional so calls and puts compare directly. Tinted cells are in the money.
         Every unit of this pool&apos;s liquidity is a written option — the v4 hook enforces it.
       </p>
+
+      <PositionSheet
+        open={sheet !== null}
+        side={sheet?.side ?? "put"}
+        strikeIndex={sheet?.strikeIndex ?? 0}
+        onOpenChange={(o) => !o && setSheet(null)}
+      />
     </>
   );
 }
@@ -195,7 +228,7 @@ function OiCell({
 function SpotMarker({ spot, tick }: { spot: number; tick: number }) {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableCell colSpan={5} className="border-y-rule border-flag-deep bg-flag px-3 py-2">
+      <TableCell colSpan={7} className="border-y-rule border-flag-deep bg-flag px-3 py-2">
         <div className="flex items-center gap-3">
           <div className="h-[2px] flex-1 rounded-pill bg-flag-deep/45" />
           <span className="whitespace-nowrap font-display text-[12.5px] font-extrabold tracking-[0.08em] text-ink tnum">

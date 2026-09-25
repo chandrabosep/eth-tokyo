@@ -27,6 +27,9 @@ export const STATE_VIEW: Address = "0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71";
 export const WETH_DECIMALS = 18;
 export const USDC_DECIMALS = 6;
 
+/** The salt every UI-created Aqua offer uses. One standing offer per seller per series. */
+export const OFFER_SALT: Hex = "0x000000000000000000000000000000000000000000000000000000000000a01a";
+
 export const poolKey = {
   currency0: deployed.weth,
   currency1: deployed.usdc,
