@@ -1,0 +1,36 @@
+{
+  "aqua": "0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a",
+  "chainId": 31337,
+  "fee": 8388608,
+  "optionsHook": "0x26cA74E71649fDf8ACfD4eE6C6F7eAe05DAf8A80",
+  "optionsManager": "0xdF0519BB3aa41D9b3639AA93Abb41dF9DA0EFc1F",
+  "poolManager": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+  "spotTick": -197429,
+  "strikeTicks": [
+    -198080,
+    -197882,
+    -197688,
+    -197497,
+    -197311,
+    -197127,
+    -196947,
+    -196770,
+    -196596
+  ],
+  "strikeUsd": [
+    2500,
+    2550,
+    2600,
+    2650,
+    2700,
+    2750,
+    2800,
+    2850,
+    2900
+  ],
+  "strikeWidth": 120,
+  "tickSpacing": 1,
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "weth": "0x4200000000000000000000000000000000000006",
+  "swapRouter": "0x741BbbEAB070dad397e5779A2Ff7f7dC4bFeA2e2"
+}
