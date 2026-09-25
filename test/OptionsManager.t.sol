@@ -278,9 +278,71 @@ contract OptionsManagerTest is Test {
         assertEq(p0 + p1, 0, "an untouched strike should earn nothing");
     }
 
+    /// @notice The streamia identity that makes the two sides net out:
+    ///           shortsOwed = feesActuallyCollected + longsOwe
+    ///         because fees accrue on (short - long) while shorts are paid on `short` and longs
+    ///         pay on `long`.
+    function test_premiumConservation() public {
+        uint256 shortId = options.tokenIdFor(IDX_SPOT, true, false);
+        uint256 longId = options.tokenIdFor(IDX_SPOT, true, true);
+        uint128 bought = WRITE_LIQUIDITY / 4;
+
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+        vm.prank(buyer);
+        options.buyOption(IDX_SPOT, true, bought);
+
+        _churn();
+
+        (int24 lo, int24 hi) = _putTicks();
+        (uint256 fg0, uint256 fg1) = manager.getFeeGrowthInside(poolId, lo, hi);
+
+        (uint256 shortOwed0, uint256 shortOwed1) = options.accruedPremium(seller, shortId);
+        (uint256 longOwes0, uint256 longOwes1) = options.accruedPremium(buyer, longId);
+
+        uint256 collected0 = FullMath.mulDiv(fg0, WRITE_LIQUIDITY - bought, FixedPoint128.Q128);
+        uint256 collected1 = FullMath.mulDiv(fg1, WRITE_LIQUIDITY - bought, FixedPoint128.Q128);
+
+        assertApproxEqAbs(shortOwed0, collected0 + longOwes0, 2, "currency0 streamia does not net out");
+        assertApproxEqAbs(shortOwed1, collected1 + longOwes1, 2, "currency1 streamia does not net out");
+        assertGt(shortOwed1 + shortOwed0, 0, "test is vacuous without fees");
+    }
+
     // -------------------------------------------------------------------------------------
     // Full lifecycle
     // -------------------------------------------------------------------------------------
+
+    function test_fullLifecycle_sellBuyChurnCloseBoth() public {
+        (int24 lo, int24 hi) = _putTicks();
+        uint128 bought = WRITE_LIQUIDITY / 2;
+
+        vm.prank(seller);
+        options.sellOption(IDX_SPOT, true, WRITE_LIQUIDITY);
+        vm.prank(buyer);
+        options.buyOption(IDX_SPOT, true, bought);
+
+        _churn();
+        _churn();
+
+        uint256 shortId = options.tokenIdFor(IDX_SPOT, true, false);
+        uint256 longId = options.tokenIdFor(IDX_SPOT, true, true);
+
+        // Buyer unwinds first, returning the borrowed liquidity to the pool.
+        vm.prank(buyer);
+        options.closeLong(IDX_SPOT, true, bought);
+        assertEq(options.balanceOf(buyer, longId), 0, "long receipt not burned");
+        assertEq(_poolLiquidityIn(lo, hi, true), WRITE_LIQUIDITY, "liquidity not restored to the pool");
+
+        // Seller can now withdraw the whole written amount.
+        vm.prank(seller);
+        options.closeShort(IDX_SPOT, true, WRITE_LIQUIDITY);
+        assertEq(options.balanceOf(seller, shortId), 0, "short receipt not burned");
+        assertEq(_poolLiquidityIn(lo, hi, true), 0, "pool should be empty again");
+
+        // The protocol is not a sink: nothing material is stranded once both sides are flat.
+        assertLt(token0.balanceOf(address(options)), 1e12, "currency0 stranded in protocol");
+        assertLt(token1.balanceOf(address(options)), 1e12, "currency1 stranded in protocol");
+    }
 
     function test_sellerEarnsPremiumOnTopOfPrincipal() public {
         vm.prank(seller);

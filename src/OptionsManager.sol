@@ -47,8 +47,8 @@ import {PositionId} from "./libraries/PositionId.sol";
 ///      `shortLiquidity - longLiquidity`, while shorts are owed on `shortLiquidity` and longs owe on
 ///      `longLiquidity`. See `test/OptionsManager.t.sol:test_premiumConservation`.
 ///
-///      Not built yet
-///      -------------
+///      Hackathon scope
+///      ---------------
 ///      Deliberately NOT built (roadmap only, see README): Aave yield stacking, IV-aware pricing
 ///      floor, insurance fund, auto-deleveraging, portfolio margin, flash-loan liquidation bots,
 ///      multi-asset markets, real perps hedging. `liquidateLong` below is a hand-cranked stand-in
@@ -238,14 +238,23 @@ contract OptionsManager is ERC1155, IUnlockCallback {
 
         (,, int24 tickLower, int24 tickUpper) = _unpack(tokenId);
         (uint256 fg0, uint256 fg1) = _feeGrowthInside(tickLower, tickUpper);
+        bool roundUp = PositionId.isLong(tokenId);
+
         unchecked {
-            premium0 = p.premium0Settled + _premiumOf(fg0 - p.feeGrowth0SnapshotX128, p.liquidity);
-            premium1 = p.premium1Settled + _premiumOf(fg1 - p.feeGrowth1SnapshotX128, p.liquidity);
+            premium0 = p.premium0Settled + _premiumOf(fg0 - p.feeGrowth0SnapshotX128, p.liquidity, roundUp);
+            premium1 = p.premium1Settled + _premiumOf(fg1 - p.feeGrowth1SnapshotX128, p.liquidity, roundUp);
         }
     }
 
-    function _premiumOf(uint256 feeGrowthDeltaX128, uint128 liquidity) internal pure returns (uint256) {
-        return FullMath.mulDiv(feeGrowthDeltaX128, liquidity, FixedPoint128.Q128);
+    /// @dev Debts round up, credits round down.
+    ///      Without this the protocol is left a wei short: a short is owed on `L`, while the fees
+    ///      backing that come from the pool (on `L - Llong`) plus the long (on `Llong`), and
+    ///      `floor(x·L)` can exceed `floor(x·(L-Llong)) + floor(x·Llong)`. Charging longs the ceiling
+    ///      closes the gap and leaves only harmless dust in the protocol's favour.
+    function _premiumOf(uint256 feeGrowthDeltaX128, uint128 liquidity, bool roundUp) internal pure returns (uint256) {
+        return roundUp
+            ? FullMath.mulDivRoundingUp(feeGrowthDeltaX128, liquidity, FixedPoint128.Q128)
+            : FullMath.mulDiv(feeGrowthDeltaX128, liquidity, FixedPoint128.Q128);
     }
 
     function _unpack(uint256 tokenId)
@@ -258,12 +267,12 @@ contract OptionsManager is ERC1155, IUnlockCallback {
 
     /// @dev Roll any premium accrued so far into `premiumXSettled` and re-snapshot, so that a
     ///      position can be added to without losing history.
-    function _realizePremium(Position storage p, int24 tickLower, int24 tickUpper) internal {
+    function _realizePremium(Position storage p, int24 tickLower, int24 tickUpper, bool roundUp) internal {
         (uint256 fg0, uint256 fg1) = _feeGrowthInside(tickLower, tickUpper);
         if (p.liquidity != 0) {
             unchecked {
-                p.premium0Settled += _premiumOf(fg0 - p.feeGrowth0SnapshotX128, p.liquidity);
-                p.premium1Settled += _premiumOf(fg1 - p.feeGrowth1SnapshotX128, p.liquidity);
+                p.premium0Settled += _premiumOf(fg0 - p.feeGrowth0SnapshotX128, p.liquidity, roundUp);
+                p.premium1Settled += _premiumOf(fg1 - p.feeGrowth1SnapshotX128, p.liquidity, roundUp);
             }
         }
         p.feeGrowth0SnapshotX128 = fg0;
@@ -430,7 +439,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         uint256 tokenId = PositionId.encode(MARKET_ID, tickLower, tickUpper, d.isPut, false);
 
         Position storage p = _positions[d.user][tokenId];
-        _realizePremium(p, tickLower, tickUpper);
+        _realizePremium(p, tickLower, tickUpper, false);
 
         (int128 principal0, int128 principal1, int128 total0, int128 total1) =
             _modify(tickLower, tickUpper, d.isPut, int256(uint256(d.liquidity)));
@@ -464,7 +473,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         require(available >= d.liquidity, InsufficientWrittenLiquidity(available, d.liquidity));
 
         Position storage p = _positions[d.user][longId];
-        _realizePremium(p, tickLower, tickUpper);
+        _realizePremium(p, tickLower, tickUpper, true);
 
         (int128 principal0, int128 principal1, int128 total0, int128 total1) =
             _modify(tickLower, tickUpper, d.isPut, -int256(uint256(d.liquidity)));
@@ -506,7 +515,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         uint128 available = s.shortLiquidity - s.longLiquidity;
         require(available >= d.liquidity, InsufficientWrittenLiquidity(available, d.liquidity));
 
-        _realizePremium(p, tickLower, tickUpper);
+        _realizePremium(p, tickLower, tickUpper, false);
 
         (int128 principal0, int128 principal1, int128 total0, int128 total1) =
             _modify(tickLower, tickUpper, d.isPut, -int256(uint256(d.liquidity)));
@@ -545,7 +554,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         require(p.liquidity != 0, NoPosition());
         require(p.liquidity >= d.liquidity, PositionTooLarge(p.liquidity, d.liquidity));
 
-        _realizePremium(p, tickLower, tickUpper);
+        _realizePremium(p, tickLower, tickUpper, true);
 
         uint256 fraction = (uint256(d.liquidity) * 1e18) / p.liquidity;
         uint256 notional0 = (p.amount0 * fraction) / 1e18;
