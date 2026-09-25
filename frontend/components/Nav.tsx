@@ -13,7 +13,6 @@ const TABS = [
   { href: "/", label: "Chain" },
   { href: "/strategies", label: "Strategies" },
   { href: "/positions", label: "Positions" },
-  { href: "/hedge", label: "Hedge" },
 ];
 
 /**

@@ -28,7 +28,10 @@ export function PageHeader({
       {description && <p className="mt-2.5 max-w-xl text-[15px] leading-relaxed text-ink-soft">{description}</p>}
 
       {stats && stats.length > 0 && (
-        <div className="mt-6 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+        <div
+          className="mt-6 grid gap-3.5"
+          style={{ gridTemplateColumns: stats.map((s) => `${s.grow ?? 1}fr`).join(" ") }}
+        >
           {stats.map((s) => (
             <Stat key={s.label} {...s} />
           ))}
@@ -44,11 +47,13 @@ export type StatSpec = {
   tone?: "default" | "lime" | "peri" | "ink";
   accent?: boolean;
   mono?: boolean;
+  /** flex-grow weight relative to siblings. Default 1. */
+  grow?: number;
 };
 
 export function Stat({ label, value, tone = "default", accent, mono }: StatSpec) {
   return (
-    <Card tone={tone} className="px-4 py-3.5">
+    <Card tone={tone} className="min-w-0 px-4 py-3.5">
       <div
         className={cn(
           "text-[10px] font-bold uppercase tracking-[0.12em]",

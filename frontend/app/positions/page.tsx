@@ -176,7 +176,7 @@ function PositionRow({
         </TableCell>
         <TableCell className="text-right">
           <Button
-            variant="outline"
+            variant="destructive"
             size="sm"
             disabled={close.busy || readOnlyMode}
             onClick={() =>

@@ -599,7 +599,6 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
         <>
           {needsManagerApproval ? (
             <Button
-              variant="outline"
               disabled={approveManager.busy}
               onClick={() =>
                 approveManager.send({

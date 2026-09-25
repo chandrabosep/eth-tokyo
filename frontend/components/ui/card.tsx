@@ -21,7 +21,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     <div
       ref={ref}
       className={cn(
-        "rounded-lg border-rule border-line shadow-md",
+        "overflow-hidden rounded-lg border-rule border-line shadow-md",
         toneClass[tone],
         className,
       )}
