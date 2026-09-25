@@ -12,6 +12,8 @@ import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {FixedPoint128} from "v4-core/libraries/FixedPoint128.sol";
+import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {ERC1155} from "solmate/src/tokens/ERC1155.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
@@ -149,6 +151,7 @@ contract OptionsManager is ERC1155, IUnlockCallback {
     error PositionTooLarge(uint128 held, uint128 requested);
     error LongStillSolvent();
     error EmptyStrategy();
+    error InsufficientAquaBacking(address token, uint256 required, uint256 available);
 
     event OptionWritten(
         address indexed seller, uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1
@@ -400,6 +403,43 @@ contract OptionsManager is ERC1155, IUnlockCallback {
         return balance;
     }
 
+    /// @notice Exactly what writing `liquidity` of a series will pull from the seller, right now.
+    ///
+    /// @dev The frontend needs this number *before* the seller ships an offer, because an Aqua
+    ///      strategy is immutable: ship too little and the only remedy is a whole new offer under a
+    ///      new salt. Estimating it off-chain invites a rounding mismatch on the last wei, so this
+    ///      mirrors `Pool.modifyLiquidity` exactly — same branch on the current tick, same
+    ///      `SqrtPriceMath` rounding — rather than approximating with `LiquidityAmounts`.
+    ///
+    ///      Quoted at the current price, so it moves as the pool moves. It is a quote, not a lock.
+    ///      For a multi-leg `sellStrategy`, every leg draws from the SAME offer, so the seller must
+    ///      ship the SUM of these quotes across legs — the caller sums them; keeping that out of the
+    ///      contract is what leaves this under the 24kB deployment limit.
+    function collateralFor(uint8 strikeIndex, bool isPut, uint128 liquidity)
+        public
+        view
+        returns (uint256 amount0, uint256 amount1)
+    {
+        if (liquidity == 0) return (0, 0);
+        (int24 tickLower, int24 tickUpper) = seriesTicks(strikeIndex, isPut);
+        (uint160 sqrtPriceX96, int24 tick,,) = poolManager.getSlot0(poolId());
+
+        uint160 sqrtLower = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtUpper = TickMath.getSqrtPriceAtTick(tickUpper);
+
+        // `roundUp: true` is not a safety margin, it is what the pool does on an add — the signed
+        // overloads exist for the same purpose but return the amount negated, from the caller's
+        // side of the ledger, which is a sign error waiting to happen in a view like this.
+        if (tick < tickLower) {
+            amount0 = SqrtPriceMath.getAmount0Delta(sqrtLower, sqrtUpper, liquidity, true);
+        } else if (tick < tickUpper) {
+            amount0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtUpper, liquidity, true);
+            amount1 = SqrtPriceMath.getAmount1Delta(sqrtLower, sqrtPriceX96, liquidity, true);
+        } else {
+            amount1 = SqrtPriceMath.getAmount1Delta(sqrtLower, sqrtUpper, liquidity, true);
+        }
+    }
+
     /// @notice Write an option funded from a maker's Aqua-registered wallet balance.
     ///
     /// @dev This is the Aqua path, and the difference from `sellOption` is where the collateral
@@ -618,7 +658,13 @@ contract OptionsManager is ERC1155, IUnlockCallback {
     ///      `transferFrom` itself, so the maker approved Aqua rather than this contract.
     function _pullViaAqua(Currency currency, address maker, bytes32 strategyHash, uint256 amount) internal {
         if (amount == 0) return;
-        AQUA.pull(maker, strategyHash, Currency.unwrap(currency), amount, address(this));
+        address token = Currency.unwrap(currency);
+        // Aqua decrements the registered balance with plain arithmetic, so an offer that does not
+        // cover the pull surfaces as a bare `panic(0x11)` with no indication of which token ran out
+        // or by how much. Check first and say so.
+        (uint248 available,) = AQUA.rawBalances(maker, address(this), strategyHash, token);
+        require(available >= amount, InsufficientAquaBacking(token, amount, available));
+        AQUA.pull(maker, strategyHash, token, amount, address(this));
     }
 
     function _pay(Currency currency, address to, uint256 amount) internal {
