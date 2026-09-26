@@ -2,8 +2,6 @@
 
 # Mamori
 
-**Set a floor under your perp.**
-
 *Mamori* (守り) is Japanese for protection — which is what an options book is for, and what the
 torii in the mark stands over.
 
