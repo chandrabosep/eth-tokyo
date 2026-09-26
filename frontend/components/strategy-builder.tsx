@@ -28,7 +28,8 @@ import {
   usdPriceToTick,
 } from "@/lib/options";
 import { useSeries, useSpotTick } from "@/lib/useMarket";
-import type { HlPosition, StrategyTemplate } from "@/lib/hyperliquid";
+import type { HlPosition } from "@/lib/hyperliquid";
+import type { StrategyTemplate } from "@/lib/strategies";
 
 /** A concrete leg: a real strike index on this market, not an offset. */
 export type BuiltLeg = {
@@ -147,6 +148,18 @@ export function StrategyBuilder({
   const worstUnhedged = ladderRows.length ? Math.min(...ladderRows.map((r) => r.perp), 0) : 0;
   const worstHedged = ladderRows.length ? Math.min(...ladderRows.map((r) => r.total), 0) : 0;
 
+  /** The standalone summary: the extremes of the structure, and the prices that produce them. */
+  const outcome = useMemo(() => {
+    if (ladderRows.length === 0) return undefined;
+    let low = ladderRows[0];
+    let high = ladderRows[0];
+    for (const r of ladderRows) {
+      if (r.total < low.total) low = r;
+      if (r.total > high.total) high = r;
+    }
+    return { worst: low.total, worstAt: low.price, best: high.total, bestAt: high.price };
+  }, [ladderRows]);
+
   /**
    * How much of each bought leg the book can actually fill.
    *
@@ -177,7 +190,11 @@ export function StrategyBuilder({
     <Card className="flex flex-col p-0">
       <CardHeader>
         <CardTitle>Strategy builder</CardTitle>
-        <CardDescription>Legs execute here. The perp stays on Hyperliquid.</CardDescription>
+        <CardDescription>
+          {position
+            ? "Legs execute here. The perp stays on Hyperliquid."
+            : "Legs execute here, as one transaction where your wallet allows it."}
+        </CardDescription>
       </CardHeader>
 
       <div className="flex flex-col gap-4 p-5 pt-0">
@@ -241,13 +258,20 @@ export function StrategyBuilder({
 
         {ladderRows.length > 0 && (
           <div className="overflow-hidden rounded-md border-rule border-line">
-            <div className="grid grid-cols-4 gap-2 border-b-rule border-line bg-paper-2 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-ink-soft">
+            {/* Without a perp there is no second book to combine with, and a column of zeros
+                between the price and the payoff is just something to read past. */}
+            <div
+              className={cn(
+                "grid gap-2 border-b-rule border-line bg-paper-2 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-ink-soft",
+                position ? "grid-cols-4" : "grid-cols-2",
+              )}
+            >
               <span className="inline-flex items-center gap-1.5">
                 <TokenIcon symbol="ETH" size={13} /> ETH at
               </span>
-              <span className="text-right">Perp</span>
-              <span className="text-right">Options</span>
-              <span className="text-right">Combined</span>
+              {position && <span className="text-right">Perp</span>}
+              {position && <span className="text-right">Options</span>}
+              <span className="text-right">{position ? "Combined" : "This structure"}</span>
             </div>
             {ladderRows.map((sc) => {
               const atSpot = spotNow !== undefined && Math.abs(sc.price - spotNow) < 26;
@@ -255,13 +279,14 @@ export function StrategyBuilder({
                 <div
                   key={sc.price}
                   className={cn(
-                    "grid grid-cols-4 gap-2 border-b border-line px-3 py-2 font-mono text-xs tnum last:border-0",
+                    "grid gap-2 border-b border-line px-3 py-2 font-mono text-xs tnum last:border-0",
+                    position ? "grid-cols-4" : "grid-cols-2",
                     atSpot && "bg-flag/35",
                   )}
                 >
                   <span className="font-bold">${sc.price.toLocaleString()}</span>
-                  <Money v={sc.perp} muted={!position} />
-                  <Money v={sc.opts} />
+                  {position && <Money v={sc.perp} />}
+                  {position && <Money v={sc.opts} />}
                   <Money v={sc.total} strong />
                 </div>
               );
@@ -269,18 +294,30 @@ export function StrategyBuilder({
           </div>
         )}
 
-        {legs.length > 0 && position && (
-          <CardNote tone={worstHedged > worstUnhedged ? "lime" : "default"}>
-            {worstHedged > worstUnhedged ? (
-              <>
-                <strong className="font-extrabold text-ink">Worst case improves.</strong> Perp alone bottoms at{" "}
-                {usd(worstUnhedged)}, hedged at {usd(worstHedged)}.
-              </>
-            ) : (
-              <>These legs do not improve the worst case. Fine for yield, but it is not protection.</>
-            )}
-          </CardNote>
-        )}
+        {legs.length > 0 &&
+          (position ? (
+            <CardNote tone={worstHedged > worstUnhedged ? "lime" : "default"}>
+              {worstHedged > worstUnhedged ? (
+                <>
+                  <strong className="font-extrabold text-ink">Worst case improves.</strong> Perp alone bottoms
+                  at {usd(worstUnhedged)}, hedged at {usd(worstHedged)}.
+                </>
+              ) : (
+                <>These legs do not improve the worst case. Fine for yield, but it is not protection.</>
+              )}
+            </CardNote>
+          ) : (
+            outcome && (
+              // Standing alone there is nothing to compare against, so the useful summary is the
+              // shape of the thing itself: how bad it gets, how good, and where.
+              <CardNote tone={outcome.best > 0 ? "lime" : "default"}>
+                <strong className="font-extrabold text-ink">Across this ladder:</strong> worst{" "}
+                {usd(outcome.worst)} at ${outcome.worstAt.toLocaleString()}, best {usd(outcome.best)} at $
+                {outcome.bestAt.toLocaleString()}. Premium sits on top — written legs earn it, bought legs
+                pay it.
+              </CardNote>
+            )
+          ))}
 
         {depth.some((d) => d?.short) && (
           <CardNote tone="danger">
