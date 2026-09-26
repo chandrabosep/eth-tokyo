@@ -11,6 +11,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CardNote } from "@/components/page-header";
+import { TokenIcon } from "@/components/token-icon";
 import { PayoffChart, type PayoffPoint } from "@/components/payoff-chart";
 import { TxNote, useTx } from "@/components/tx";
 import { cn } from "@/lib/utils";
@@ -194,8 +195,8 @@ export function StrategyBuilder({
                 </Badge>
                 <span className="text-[13px] font-bold tnum">{strikeLabel(leg.strikeIndex)}</span>
                 <span className="text-[13px] font-semibold text-ink-soft">{leg.isPut ? "put" : "call"}</span>
-                <span className="ml-auto font-mono text-xs text-ink-soft tnum">
-                  {fmt(leg.sizeEth, 4)} ETH
+                <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-xs text-ink-soft tnum">
+                  {fmt(leg.sizeEth, 4)} <TokenIcon symbol="ETH" size={13} /> ETH
                 </span>
                 {depth[i]?.short && (
                   <button
@@ -241,7 +242,9 @@ export function StrategyBuilder({
         {ladderRows.length > 0 && (
           <div className="overflow-hidden rounded-md border-rule border-line">
             <div className="grid grid-cols-4 gap-2 border-b-rule border-line bg-paper-2 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-ink-soft">
-              <span>ETH at</span>
+              <span className="inline-flex items-center gap-1.5">
+                <TokenIcon symbol="ETH" size={13} /> ETH at
+              </span>
               <span className="text-right">Perp</span>
               <span className="text-right">Options</span>
               <span className="text-right">Combined</span>
@@ -356,13 +359,22 @@ function AddLeg({ onAdd, defaultSize }: { onAdd: (l: BuiltLeg) => void; defaultS
           <option value="sell">write</option>
           <option value="buy">buy</option>
         </select>
-        <Input
-          aria-label="Size in ETH"
-          className="h-10 w-[96px]"
-          inputMode="decimal"
-          value={size}
-          onChange={(e) => setSize(e.target.value)}
-        />
+        {/* The size is in ETH and nothing on the row said so — the mark labels the
+            field without spending another line on a word. */}
+        <div className="relative">
+          <Input
+            aria-label="Size in ETH"
+            className="h-10 w-[104px] pr-8"
+            inputMode="decimal"
+            value={size}
+            onChange={(e) => setSize(e.target.value)}
+          />
+          <TokenIcon
+            symbol="ETH"
+            size={15}
+            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
+          />
+        </div>
         <Button
           size="sm"
           variant="outline"

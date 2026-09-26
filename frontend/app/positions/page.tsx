@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CardNote, PageHeader } from "@/components/page-header";
+import { TokenLabel } from "@/components/token-icon";
 import { TxNote, useTx } from "@/components/tx";
 
 import { optionsManagerAbi } from "@/lib/abi";
@@ -163,13 +164,13 @@ function PositionRow({
         <TableCell className="whitespace-nowrap text-[13px] font-bold tnum">{strikeLabel(strikeIndex)}</TableCell>
         <TableCell className="text-right font-mono text-xs text-ink-soft tnum">{size.toString()}</TableCell>
         <TableCell className="whitespace-nowrap text-right text-[13px] font-bold leading-snug tnum">
-          <div>
+          <div className="flex items-center justify-end gap-1.5">
             {sign}
-            {fmt(fromRaw(p0, WETH_DECIMALS), 6)} <span className="text-ink-soft">WETH</span>
+            {fmt(fromRaw(p0, WETH_DECIMALS), 6)} <TokenLabel symbol="WETH" className="text-ink-soft" />
           </div>
-          <div>
+          <div className="flex items-center justify-end gap-1.5">
             {sign}
-            {fmt(fromRaw(p1, USDC_DECIMALS), 4)} <span className="text-ink-soft">USDC</span>
+            {fmt(fromRaw(p1, USDC_DECIMALS), 4)} <TokenLabel symbol="USDC" className="text-ink-soft" />
           </div>
         </TableCell>
         <TableCell className="text-right">

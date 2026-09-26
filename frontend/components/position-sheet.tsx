@@ -27,6 +27,7 @@ import {
 } from "@/lib/options";
 import { useSeries, useSpotTick } from "@/lib/useMarket";
 import { TxNote, useTx } from "@/components/tx";
+import { TokenIcon, TokenLabel, TokenPair } from "@/components/token-icon";
 
 export type Side = "call" | "put";
 type Direction = "sell" | "buy";
@@ -117,9 +118,12 @@ export function PositionSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-[430px]">
         <SheetHeader>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={side}>{side}</Badge>
             {profile?.mixed && <Badge variant="itm">straddling spot</Badge>}
+            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-bold tracking-[0.06em] text-ink-soft">
+              <TokenPair base="WETH" quote="USDC" size={16} /> WETH / USDC
+            </span>
           </div>
           <SheetTitle>{strikeLabel(strikeIndex)}</SheetTitle>
           <SheetDescription>
@@ -145,7 +149,9 @@ export function PositionSheet({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="notional">Notional ({quoteSymbol})</Label>
+            <Label htmlFor="notional" className="flex items-center gap-1.5">
+              Notional <TokenLabel symbol={quoteSymbol} size={13} className="tracking-normal" />
+            </Label>
             <Input id="notional" inputMode="decimal" value={notional} onChange={(e) => setNotional(e.target.value)} />
           </div>
 
@@ -153,7 +159,21 @@ export function PositionSheet({
             <Row label="Liquidity units" value={liquidity.toString()} mono />
             <Row
               label={direction === "sell" ? "Collateral to post" : "Buyer collateral (10%)"}
-              value={legs.length ? legs.map((l) => `${fmt(l.amount, l.decimals === 18 ? 5 : 2)} ${l.symbol}`).join(" + ") : "—"}
+              value={
+                legs.length ? (
+                  <span className="inline-flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                    {legs.map((l, i) => (
+                      <span key={l.symbol} className="inline-flex items-center gap-1.5">
+                        {i > 0 && <span className="text-ink-faint">+</span>}
+                        {fmt(l.amount, l.decimals === 18 ? 5 : 2)}
+                        <TokenLabel symbol={l.symbol} size={13} />
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  "—"
+                )
+              }
               mono
             />
           </div>
@@ -179,11 +199,21 @@ export function PositionSheet({
   );
 }
 
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Row({
+  label,
+  value,
+  mono,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-line py-2 last:border-0">
+    // `items-center`, not baseline: a value carrying a token mark is taller than
+    // its text, and baseline alignment hangs the label off the top of it.
+    <div className="flex items-center justify-between gap-3 border-b border-line py-2 last:border-0">
       <span className="shrink-0 text-xs text-ink-soft">{label}</span>
-      <span className={cn("truncate text-right text-xs", mono && "font-mono tnum")}>{value}</span>
+      <span className={cn("min-w-0 truncate text-right text-xs", mono && "font-mono tnum")}>{value}</span>
     </div>
   );
 }
@@ -304,7 +334,11 @@ function SellPanel({
         {enriched.map((l) => (
           <Row
             key={l.symbol}
-            label={`${l.symbol} needed / committed`}
+            label={
+              <span className="inline-flex items-center gap-1.5">
+                <TokenIcon symbol={l.symbol} size={14} /> {l.symbol} needed / committed
+              </span>
+            }
             value={`${fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)} / ${fmt(
               fromRaw(l.committed, l.decimals),
               l.decimals === 18 ? 5 : 2,
@@ -328,7 +362,9 @@ function SellPanel({
             <>
               {enriched.map((l) => (
                 <div key={l.symbol} className="space-y-1.5">
-                  <Label htmlFor={`ship-${l.symbol}`}>Step 1 · Back an offer ({l.symbol})</Label>
+                  <Label htmlFor={`ship-${l.symbol}`} className="flex items-center gap-1.5">
+                    Step 1 · Back an offer <TokenLabel symbol={l.symbol} size={13} className="tracking-normal" />
+                  </Label>
                   <Input
                     id={`ship-${l.symbol}`}
                     inputMode="decimal"
@@ -337,8 +373,8 @@ function SellPanel({
                   />
                   {toRaw(Number(backing[l.symbol]) || 0, l.decimals) < l.amount && (
                     <p className="text-[11px] text-destructive">
-                      Below the {fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)} {l.symbol} this
-                      write needs.
+                      Below the {fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)}{" "}
+                      <TokenLabel symbol={l.symbol} size={12} /> this write needs.
                     </p>
                   )}
                 </div>

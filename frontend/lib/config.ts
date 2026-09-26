@@ -1,5 +1,18 @@
 import { encodeAbiParameters, keccak256, type Address, type Hex } from "viem";
-import deployment from "../../deployments/base-fork.json";
+import localFork from "../../deployments/base-fork.json";
+import hostedFork from "../../deployments/hosted-fork.json";
+
+/**
+ * Which chain's contracts this build targets.
+ *
+ * The local anvil fork and the hosted one are BOTH chain 31337 but deploy to different addresses
+ * (different solc resolution produces a different init code hash, which moves the CREATE2 hook and
+ * everything after it). So the chain id cannot pick between them — the build has to.
+ *
+ * `NEXT_PUBLIC_DEPLOYMENT=hosted` on Vercel; unset locally. A stopgap until the network registry
+ * lands and a deployment becomes a property of the selected network rather than of the build.
+ */
+const deployment = process.env.NEXT_PUBLIC_DEPLOYMENT === "hosted" ? hostedFork : localFork;
 
 export type Deployment = {
   chainId: number;

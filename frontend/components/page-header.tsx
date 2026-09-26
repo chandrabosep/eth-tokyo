@@ -2,6 +2,7 @@
 
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TokenIcon } from "@/components/token-icon";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,16 +16,22 @@ import { cn } from "@/lib/utils";
  */
 export function PageHeader({
   title,
+  icon,
   description,
   stats,
 }: {
   title: string;
+  /** Sits on the title's baseline row — a market's coins, where the page has a market. */
+  icon?: React.ReactNode;
   description?: string;
   stats?: StatSpec[];
 }) {
   return (
     <section className="mt-8">
-      <h2 className="font-display text-[30px] font-extrabold leading-none tracking-[-0.04em]">{title}</h2>
+      <div className="flex items-center gap-3">
+        {icon}
+        <h2 className="font-display text-[30px] font-extrabold leading-none tracking-[-0.04em]">{title}</h2>
+      </div>
       {description && <p className="mt-2 max-w-lg text-[14px] leading-relaxed text-ink-soft">{description}</p>}
 
       {stats && stats.length > 0 && (
@@ -50,20 +57,23 @@ export type StatSpec = {
   tone?: "default" | "lime" | "peri" | "ink";
   accent?: boolean;
   mono?: boolean;
+  /** Ticker whose mark leads the label, where the figure belongs to one token. */
+  token?: string;
   /** flex-grow weight relative to siblings. Default 1. */
   grow?: number;
 };
 
-export function Stat({ label, value, tone = "default", accent, mono }: StatSpec) {
+export function Stat({ label, value, tone = "default", accent, mono, token }: StatSpec) {
   return (
     <Card tone={tone} className="min-w-0 px-4 py-3.5">
       <div
         className={cn(
-          "text-[10px] font-bold uppercase tracking-[0.12em]",
+          "flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em]",
           tone === "ink" ? "text-paper/80" : "text-ink",
         )}
       >
-        {label}
+        {token && <TokenIcon symbol={token} size={13} />}
+        <span className="truncate">{label}</span>
       </div>
       {value === undefined ? (
         <Skeleton className={cn("mt-2 h-7 w-24", tone === "ink" && "bg-paper/15")} />

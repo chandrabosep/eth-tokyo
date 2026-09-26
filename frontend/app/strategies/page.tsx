@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CardNote, PageHeader } from "@/components/page-header";
+import { TokenIcon, TokenPair } from "@/components/token-icon";
 import { cn } from "@/lib/utils";
 
 import { deployed, strikeLabel } from "@/lib/config";
@@ -89,6 +90,7 @@ function Strategies() {
           },
           {
             label: `${MARKET_COIN} perp delta`,
+            token: MARKET_COIN,
             tone: "peri",
             value: active ? `${fmt(active.delta, 4)}` : "—",
             grow: 0.96,
@@ -188,15 +190,17 @@ function Strategies() {
         <section className="mt-5">
           <Card className="p-5">
             <CardTitle className="text-base">Other perps on this account</CardTitle>
-            <CardDescription className="mt-1">
-              Only WETH/USDC is deployed, so these are not tradable yet.
+            <CardDescription className="mt-1 flex flex-wrap items-center gap-1.5">
+              Only <TokenPair base="WETH" quote="USDC" size={15} /> WETH/USDC is deployed, so these are not
+              tradable yet.
             </CardDescription>
             <div className="mt-3.5 flex flex-wrap gap-2">
               {others.map((p) => (
                 <span
                   key={p.coin}
-                  className="rounded-pill border-rule border-line bg-paper-2 px-3 py-1.5 text-xs font-bold tnum"
+                  className="inline-flex items-center gap-1.5 rounded-pill border-rule border-line bg-paper-2 py-1.5 pl-1.5 pr-3 text-xs font-bold tnum"
                 >
+                  <TokenIcon symbol={p.coin} size={17} />
                   {p.coin} {p.szi > 0 ? "+" : ""}
                   {fmt(p.szi, 3)}
                 </span>
@@ -233,9 +237,12 @@ function PositionSummary({ p }: { p: HlPosition }) {
             Hyperliquid <ExternalLink className="size-3" aria-hidden="true" />
           </a>
         </div>
-        <CardTitle className="mt-1 text-[24px] tnum">
-          {p.szi > 0 ? "+" : ""}
-          {fmt(p.szi, 4)} {p.coin}
+        <CardTitle className="mt-1 flex items-center gap-2 text-[24px] tnum">
+          <TokenIcon symbol={p.coin} size={22} />
+          <span>
+            {p.szi > 0 ? "+" : ""}
+            {fmt(p.szi, 4)} {p.coin}
+          </span>
         </CardTitle>
       </CardHeader>
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y-rule border-line bg-paper-2 px-4 py-3 sm:grid-cols-4">

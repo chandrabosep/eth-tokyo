@@ -2,6 +2,7 @@
 
 import { OptionChain } from "@/components/option-chain";
 import { PageHeader } from "@/components/page-header";
+import { TokenPair } from "@/components/token-icon";
 import { useHookPricing, useSeries, useSpotTick } from "@/lib/useMarket";
 import { tickToUsdPrice } from "@/lib/options";
 
@@ -19,6 +20,7 @@ export default function ChainPage() {
     <>
       <PageHeader
         title="WETH / USDC"
+        icon={<TokenPair base="WETH" quote="USDC" size={32} />}
         description="Every option is a Uniswap v4 liquidity position. Writing mints it, buying removes it."
         stats={[
           {
@@ -52,6 +54,7 @@ export default function ChainPage() {
  * protocol — and both of its inputs are measured on-chain from this pool. Nothing here is quoted.
  */
 function PricingBar({
+  realisedVolBps,
   utilisationBps,
   volFee,
   currentFee,
@@ -65,16 +68,24 @@ function PricingBar({
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 rounded-md border-rule border-line bg-card px-5 py-4 shadow-xs">
+      {/* The chain reads left to right as the hook computes it: a measurement of
+          this pool, turned into a fee, marked up by how much of the book is out. */}
       <div className="flex flex-wrap items-baseline gap-x-6 gap-y-3">
-        <Term label="Fair value" value={pct(volFee)} note="from realised vol" />
+        <Term
+          label="Realised volatility"
+          value={`${(realisedVolBps / 100).toFixed(1)}%`}
+          note="annualised, from this pool's tick path"
+        />
+        <Op>{"\u2192"}</Op>
+        <Term label="Fair value fee" value={pct(volFee)} note="what the option is worth" />
         <Op>+</Op>
         <Term
           label="Utilisation spread"
           value={pct(currentFee - volFee)}
-          note={`${(utilisationBps / 100).toFixed(0)}% lent out`}
+          note={`${(utilisationBps / 100).toFixed(0)}% of the book is lent out`}
         />
         <Op>=</Op>
-        <Term label="LP fee now" value={pct(currentFee)} accent note="what writers earn" />
+        <Term label="LP fee now" value={pct(currentFee)} accent note="the premium writers earn" />
       </div>
       <p className="max-w-[15rem] text-[12.5px] leading-relaxed text-ink-soft">
         Premium is this pool&apos;s swap fee. No oracle, no pricing model.
