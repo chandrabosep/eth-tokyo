@@ -124,10 +124,10 @@ export function PositionSheet({
           <SheetTitle>{strikeLabel(strikeIndex)}</SheetTitle>
           <SheetDescription>
             {profile?.mixed
-              ? "Price is inside this range, so the position holds both tokens and is funded in both."
+              ? "Spot is inside this range. Funded in both tokens."
               : quoteInWeth
-                ? "This range sits above spot, so it is funded entirely in WETH."
-                : "This range sits below spot, so it is funded entirely in USDC."}
+                ? "Above spot. Funded in WETH."
+                : "Below spot. Funded in USDC."}
           </SheetDescription>
         </SheetHeader>
 
@@ -138,7 +138,7 @@ export function PositionSheet({
             <Label>Direction</Label>
             <SegmentedRoot value={direction} onValueChange={(v) => setDirection(v as Direction)}>
               <SegmentedList>
-                <SegmentedItem value="sell">Sell (Write)</SegmentedItem>
+                <SegmentedItem value="sell">Write</SegmentedItem>
                 <SegmentedItem value="buy">Buy</SegmentedItem>
               </SegmentedList>
             </SegmentedRoot>
@@ -159,14 +159,13 @@ export function PositionSheet({
           </div>
 
           {overBuy && (
-            <p className="rounded-md border-rule border-line bg-destructive/12 shadow-xs p-3 text-xs">
-              Only {available.toString()} liquidity units are written at this strike. A long is an inverted
-              short — someone has to write it first.
+            <p className="rounded-md border-rule border-line bg-destructive/12 px-3.5 py-3 text-xs shadow-xs">
+              Only {available.toString()} liquidity units are written at this strike.
             </p>
           )}
 
           {!isConnected ? (
-            <p className="rounded-md border-rule border-line bg-paper-2 p-3.5 shadow-xs text-xs text-ink-soft">
+            <p className="rounded-md border-rule border-line bg-paper-2 px-3.5 py-3 text-xs text-ink-soft shadow-xs">
               Connect a wallet to trade.
             </p>
           ) : direction === "sell" ? (
@@ -322,17 +321,14 @@ function SellPanel({
             <Note>Enter a size to see what this write needs.</Note>
           ) : !nextFree ? (
             <Note>
-              <strong className="text-foreground">Every offer slot is spent.</strong> Aqua strategies are
-              immutable, so each salt can only be shipped once. Nothing is lost — the tokens never left your
-              wallet — but this build scans a fixed number of slots.
+              <strong className="text-foreground">Every offer slot is spent.</strong> Nothing is lost, the
+              tokens never left your wallet.
             </Note>
           ) : (
             <>
               {enriched.map((l) => (
                 <div key={l.symbol} className="space-y-1.5">
-                  <Label htmlFor={`ship-${l.symbol}`}>
-                    Step 1 — Back a new offer with Aqua ({l.symbol})
-                  </Label>
+                  <Label htmlFor={`ship-${l.symbol}`}>Step 1 · Back an offer ({l.symbol})</Label>
                   <Input
                     id={`ship-${l.symbol}`}
                     inputMode="decimal"
@@ -342,7 +338,7 @@ function SellPanel({
                   {toRaw(Number(backing[l.symbol]) || 0, l.decimals) < l.amount && (
                     <p className="text-[11px] text-destructive">
                       Below the {fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)} {l.symbol} this
-                      write needs. An offer cannot be topped up later.
+                      write needs.
                     </p>
                   )}
                 </div>
@@ -360,7 +356,7 @@ function SellPanel({
                     })
                   }
                 >
-                  {approve.busy ? "Approving…" : `Approve Aqua to draw ${needsApproval.symbol}`}
+                  {approve.busy ? "Approving…" : `Approve ${needsApproval.symbol} for Aqua`}
                 </Button>
               ) : (
                 <Button
@@ -383,15 +379,13 @@ function SellPanel({
                     })
                   }
                 >
-                  {ship.busy ? "Shipping…" : `Ship offer #${nextFree.index}${enriched.length > 1 ? " (both legs)" : ""}`}
+                  {ship.busy ? "Shipping…" : `Ship offer #${nextFree.index}`}
                 </Button>
               )}
 
               <Note>
                 <strong className="text-foreground">Nothing leaves your wallet.</strong> Aqua registers the
-                balance as backing; the tokens stay yours, stay liquid, and can back other Aqua strategies at
-                the same time.
-                {enriched.length > 1 && " This range straddles spot, so both legs are registered in one offer."}
+                balance as backing. The tokens stay yours and stay liquid.
               </Note>
             </>
           )}
@@ -409,11 +403,11 @@ function SellPanel({
               })
             }
           >
-            {write.busy ? "Writing…" : "Step 2 — Write the option"}
+            {write.busy ? "Writing…" : "Step 2 · Write the option"}
           </Button>
           <Note>
-            <strong className="text-foreground">Now the collateral moves.</strong> Writing mints the liquidity
-            into Uniswap v4 and pulls exactly what the mint needs, straight out of your wallet through Aqua.
+            <strong className="text-foreground">Now the collateral moves.</strong> The mint pulls exactly what
+            it needs, through Aqua.
           </Note>
         </>
       )}
@@ -478,7 +472,7 @@ function BuyPanel({
         >
           {tx.busy ? "Approving…" : `Approve ${sym}`}
         </Button>
-        <Note>Buyers post collateral directly — only sellers route through Aqua.</Note>
+        <Note>Buyers post collateral directly. Only sellers route through Aqua.</Note>
         <TxNote tx={tx} label="Approval" />
       </div>
     );
@@ -501,7 +495,7 @@ function BuyPanel({
       </Button>
       <Note>
         <strong className="text-foreground">This removes liquidity from the pool.</strong> That inversion is
-        what makes you long, and it is why 10% collateral is enough.
+        what makes you long.
       </Note>
       <TxNote tx={buy} label="Buy" />
     </div>
@@ -510,7 +504,7 @@ function BuyPanel({
 
 function Note({ children }: { children: React.ReactNode }) {
   return (
-    <p className="rounded-md border-rule border-line bg-lime-wash p-3 text-xs leading-relaxed text-ink-soft">
+    <p className="rounded-md border-rule border-line bg-lime-wash px-3.5 py-3 text-xs leading-relaxed text-ink-soft">
       {children}
     </p>
   );

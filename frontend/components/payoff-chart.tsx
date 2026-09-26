@@ -257,7 +257,7 @@ export function PayoffChart({
               </strong>
             </>
           ) : (
-            "hover the curve for a readout"
+            "hover for a readout"
           )}
         </span>
       </figcaption>

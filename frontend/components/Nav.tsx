@@ -80,15 +80,14 @@ export function Nav() {
       {/* A mismatched wallet estimates gas itself and silently under-funds the
           transaction, so this blocks loudly rather than letting it fail. */}
       {wrongNetwork && (
-        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border-rule border-line bg-flag p-4 text-sm shadow-sm">
+        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border-rule border-line bg-flag px-4 py-3 text-sm shadow-sm">
           <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
           <span className="flex-1 font-medium">
-            <strong className="font-extrabold">Wrong network.</strong> Your wallet is on chain{" "}
-            <span className="font-mono">{chainId}</span>, but this runs on the local Base fork (chain{" "}
-            <span className="font-mono">{baseFork.id}</span>).
+            <strong className="font-extrabold">Wrong network.</strong> This runs on the Base fork, chain{" "}
+            <span className="font-mono">{baseFork.id}</span>.
           </span>
           <Button size="sm" disabled={switching} onClick={() => switchChain({ chainId: baseFork.id })}>
-            {switching ? "Switching…" : "Switch network"}
+            {switching ? "Switching…" : "Switch"}
           </Button>
         </div>
       )}

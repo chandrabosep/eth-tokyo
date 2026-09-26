@@ -47,7 +47,7 @@ function Shell({
   return (
     <div
       className={cn(
-        "flex items-start gap-2.5 rounded-md border-rule border-line p-3 text-[12.5px] leading-relaxed shadow-xs",
+        "flex items-start gap-2.5 rounded-md border-rule border-line px-3.5 py-3 text-[12.5px] leading-relaxed shadow-xs",
         tone === "error" && "bg-destructive/12",
         tone === "success" && "bg-lime-wash",
         tone === "info" && "bg-paper-2",
@@ -102,12 +102,10 @@ export function revertMessage(error: unknown): string {
       const dp = isWeth ? WETH_DECIMALS : USDC_DECIMALS;
       const sym = isWeth ? "WETH" : "USDC";
       const show = (v: bigint) => fmt(fromRaw(v, dp), isWeth ? 5 : 2);
-      const tail = "Aqua strategies are immutable, so this needs a new offer, not a top-up.";
+      const tail = "Needs a new offer, not a top-up.";
       return available === 0n
-        ? `This range is funded in ${sym} and your offer does not back ${sym} at all — it needs ${show(
-            required,
-          )}. ${tail}`
-        : `Aqua offer too small — this write needs ${show(required)} ${sym} but the offer has ${show(
+        ? `Your offer does not back ${sym} at all. This write needs ${show(required)}. ${tail}`
+        : `Offer too small. This write needs ${show(required)} ${sym}, the offer has ${show(
             available,
           )}. ${tail}`;
     }
@@ -153,8 +151,7 @@ export function TxNote({ tx, label }: { tx: ReturnType<typeof useTx>; label: str
         {outOfGas && (
           <>
             {" "}
-            Far too little for this call, which needs roughly 430,000 — your wallet almost certainly estimated the
-            gas itself. Check it is on <strong className="font-extrabold">Base fork</strong>, chain{" "}
+            Too little for this call. Check your wallet is on the Base fork, chain{" "}
             <span className="font-mono">31337</span>.
           </>
         )}

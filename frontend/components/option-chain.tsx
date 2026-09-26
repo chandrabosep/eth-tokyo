@@ -175,9 +175,8 @@ export function OptionChain() {
         </Table>
       </Card>
 
-      <p className="mt-4 max-w-2xl text-[13px] leading-relaxed text-ink-soft">
-        Open interest is shown as USD notional so calls and puts compare directly. Tinted cells are in the money.
-        Every unit of this pool&apos;s liquidity is a written option — the v4 hook enforces it.
+      <p className="mt-4 text-[13px] text-ink-soft">
+        Open interest in USD notional. Tinted cells are in the money.
       </p>
 
       <PositionSheet

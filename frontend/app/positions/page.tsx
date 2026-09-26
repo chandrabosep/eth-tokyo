@@ -18,7 +18,7 @@ import { useViewer } from "@/lib/useViewer";
 
 export default function PositionsPage() {
   return (
-    <Suspense fallback={<div className="mt-9 text-sm text-ink-soft">Loading…</div>}>
+    <Suspense fallback={<div className="mt-8 text-sm text-ink-soft">Loading…</div>}>
       <Positions />
     </Suspense>
   );
@@ -60,7 +60,7 @@ function Positions() {
     <>
       <PageHeader
         title="Your positions"
-        description="Premium is read live from the pool's own feeGrowthInside — real fees paid by real swappers, not a pricing model. A short earns it; a long pays it."
+        description="Premium comes from real swap fees. Shorts earn it, longs pay it."
         stats={[
           { label: "Open legs", tone: "lime", value: String(openCount), grow: 0.96 },
           { label: "Short", value: String(shorts), grow: 0.96 },
@@ -76,15 +76,14 @@ function Positions() {
       />
 
       {readOnly && (
-        <div className="mt-6">
+        <div className="mt-5">
           <CardNote>
-            Read-only view of <span className="font-mono">{address}</span>. Connect that wallet to act on these
-            positions.
+            Read-only view of <span className="font-mono">{address}</span>. Connect that wallet to trade.
           </CardNote>
         </div>
       )}
 
-      <section className="mt-6">
+      <section className="mt-5">
         <Card className="overflow-hidden p-0">
           {!isConnected ? (
             <Empty>Connect a wallet to see your positions.</Empty>
@@ -120,11 +119,9 @@ function Positions() {
         </Card>
       </section>
 
-      {tick !== undefined && (
-        <p className="mt-4 max-w-2xl text-[13px] leading-relaxed text-ink-soft">
-          Spot is <strong className="font-bold text-ink">${fmt(tickToUsdPrice(tick), 2)}</strong> (tick {tick}).
-          Premium only accrues while price is inside an option&apos;s range — an untouched strike earns nothing,
-          exactly as it should.
+      {positions.length > 0 && (
+        <p className="mt-4 text-[13px] text-ink-soft">
+          Premium accrues only while spot sits inside an option&apos;s range.
         </p>
       )}
     </>

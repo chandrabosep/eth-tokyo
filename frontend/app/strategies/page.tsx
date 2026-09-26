@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { ExternalLink, TrendingDown, TrendingUp } from "lucide-react";
+import { ExternalLink, Search, TrendingDown, TrendingUp, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,10 +36,13 @@ import {
 /** The coin our options market is written on. Other perps are shown but not actionable yet. */
 const MARKET_COIN = "ETH";
 
+/** A real account carrying live perps, so an empty wallet can still see the flow. */
+const EXAMPLE_ADDRESS = "0x010461c14e146ac35fe42271bdc1134ee31c703a";
+
 export default function StrategiesPage() {
   return (
     <Suspense
-      fallback={<div className="mt-9 text-sm text-ink-soft">Loading…</div>}
+      fallback={<div className="mt-8 text-sm text-ink-soft">Loading…</div>}
     >
       <Strategies />
     </Suspense>
@@ -72,7 +75,7 @@ function Strategies() {
     <>
       <PageHeader
         title="Strategies"
-        description="Read your live Hyperliquid perps, then act on them here. Hyperliquid is the position source; every structure below executes on this options market."
+        description="Read your live Hyperliquid perps, then hedge them here."
         stats={[
           {
             label: "HL account value",
@@ -100,37 +103,50 @@ function Strategies() {
         ]}
       />
 
-      <section className="mt-6">
-        <Card className="p-5">
-          <Label htmlFor="hl">Hyperliquid address</Label>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Input
-              id="hl"
-              className="min-w-[280px] flex-1"
-              placeholder={connected ?? "0x…"}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-            />
-            <Button
-              variant="outline"
-              onClick={() =>
-                setInput("0x010461c14e146ac35fe42271bdc1134ee31c703a")
-              }
+      {/* An address lookup, not a form field: the search affordance and the
+          placeholder carry the labelling, so the example shortcut can drop to a
+          quiet link instead of matching the input's weight. */}
+      <section className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-2.5">
+        <Label htmlFor="hl" className="sr-only">
+          Hyperliquid address
+        </Label>
+        <div className="relative min-w-[17rem] flex-1 sm:max-w-[28rem]">
+          <Search
+            className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-ink-faint"
+            aria-hidden="true"
+          />
+          <Input
+            id="hl"
+            spellCheck={false}
+            autoComplete="off"
+            className="h-11 pl-10 pr-10 font-mono text-[13px] font-medium"
+            placeholder={connected ?? "Hyperliquid address (0x…)"}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+          {input && (
+            <button
+              type="button"
+              aria-label="Clear address"
+              onClick={() => setInput("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-pill p-1 text-ink-faint transition-colors hover:bg-paper-2 hover:text-ink"
             >
-              Use a live example
-            </Button>
-          </div>
-          <p className="mt-2.5 text-[12.5px] leading-relaxed text-ink-soft">
-            Defaults to your connected wallet. Read-only — we never sign
-            anything on Hyperliquid. If your wallet has no perps, the example
-            button loads a real account with live positions so you can see the
-            flow.
-          </p>
-        </Card>
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        {/* Lime is the app's action colour in chrome (see the nav's connect
+            button) — a ghost link here read as static text, not a control. */}
+        <Button variant="lime" size="sm" onClick={() => setInput(EXAMPLE_ADDRESS)}>
+          Try an example
+        </Button>
+        {data && positions.length === 0 && (
+          <p className="text-[12.5px] text-ink-soft sm:ml-auto">No open perps on this address</p>
+        )}
       </section>
 
       {error && (
-        <div className="mt-5">
+        <div className="mt-4">
           <CardNote tone="danger">
             Hyperliquid: {(error as Error).message}
           </CardNote>
@@ -138,26 +154,14 @@ function Strategies() {
       )}
 
       {isLoading && (
-        <div className="mt-5 space-y-2">
+        <div className="mt-4 space-y-2">
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-20 w-full" />
-        </div>
-      )}
-
-      {data && positions.length === 0 && (
-        <div className="mt-5">
-          <CardNote>
-            No open perps on this address. Paste one that has positions, or hit{" "}
-            <strong className="font-extrabold text-ink">
-              Use a live example
-            </strong>
-            .
-          </CardNote>
         </div>
       )}
 
       {actionable.length > 0 && (
-        <section className="mt-6 grid items-start gap-5 lg:grid-cols-[260px_1fr]">
+        <section className="mt-5 grid items-start gap-4 lg:grid-cols-[260px_1fr]">
           {/* Sticky left sidebar — stays visible while the builder scrolls */}
           <div className="flex flex-col gap-3 lg:sticky lg:top-6">
             {active && <PositionSummary p={active} />}
@@ -181,17 +185,13 @@ function Strategies() {
       )}
 
       {others.length > 0 && (
-        <section className="mt-6">
+        <section className="mt-5">
           <Card className="p-5">
-            <CardTitle className="text-base">
-              Other perps on this account
-            </CardTitle>
+            <CardTitle className="text-base">Other perps on this account</CardTitle>
             <CardDescription className="mt-1">
-              No options market is deployed for these yet — this build ships one
-              market, WETH/USDC. The strike ladder and hook are per-market, so
-              adding another is a deployment, not a redesign.
+              Only WETH/USDC is deployed, so these are not tradable yet.
             </CardDescription>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-3.5 flex flex-wrap gap-2">
               {others.map((p) => (
                 <span
                   key={p.coin}

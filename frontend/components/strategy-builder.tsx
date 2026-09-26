@@ -176,16 +176,12 @@ export function StrategyBuilder({
     <Card className="flex flex-col p-0">
       <CardHeader>
         <CardTitle>Strategy builder</CardTitle>
-        <CardDescription>
-          Legs execute on this options market. The perp stays on Hyperliquid — we only read it.
-        </CardDescription>
+        <CardDescription>Legs execute here. The perp stays on Hyperliquid.</CardDescription>
       </CardHeader>
 
       <div className="flex flex-col gap-4 p-5 pt-0">
         {legs.length === 0 ? (
-          <CardNote>
-            No legs yet. Pick a preset from a position, or add one below to build your own.
-          </CardNote>
+          <CardNote>No legs yet. Pick a structure, or add one below.</CardNote>
         ) : (
           <div className="overflow-hidden rounded-md border-rule border-line">
             {legs.map((leg, i) => (
@@ -274,24 +270,19 @@ export function StrategyBuilder({
           <CardNote tone={worstHedged > worstUnhedged ? "lime" : "default"}>
             {worstHedged > worstUnhedged ? (
               <>
-                <strong className="font-extrabold text-ink">Worst case improves.</strong> Across the ladder the
-                perp alone bottoms at ${fmt(worstUnhedged, 2)}; with these legs it bottoms at $
-                {fmt(worstHedged, 2)} — about ${fmt(worstHedged - worstUnhedged, 2)} of drawdown removed.
+                <strong className="font-extrabold text-ink">Worst case improves.</strong> Perp alone bottoms at{" "}
+                {usd(worstUnhedged)}, hedged at {usd(worstHedged)}.
               </>
             ) : (
-              <>
-                These legs do not improve the worst case across the ladder. That is fine for a yield
-                structure, but it is not protection — check it is what you intended.
-              </>
+              <>These legs do not improve the worst case. Fine for yield, but it is not protection.</>
             )}
           </CardNote>
         )}
 
         {depth.some((d) => d?.short) && (
           <CardNote tone="danger">
-            <strong className="font-extrabold text-ink">Not enough written at that strike.</strong> Buying
-            here removes liquidity someone else wrote, so a long cannot exist before the matching short
-            does. Click the red cap on a leg to size it to what is available, or write the strike first.
+            <strong className="font-extrabold text-ink">Not enough written at that strike.</strong> Click the
+            cap on a leg to resize it.
           </CardNote>
         )}
 
@@ -299,6 +290,11 @@ export function StrategyBuilder({
       </div>
     </Card>
   );
+}
+
+/** Currency with the sign outside the symbol: −$540.56, not $-540.56. */
+function usd(v: number): string {
+  return `${v < 0 ? "\u2212" : ""}$${fmt(Math.abs(v), 2)}`;
 }
 
 function Money({ v, strong, muted }: { v: number; strong?: boolean; muted?: boolean }) {
@@ -517,7 +513,7 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
   }, [shipped, wrote, refetchOffers]);
 
   if (legs.length === 0) return null;
-  if (!isConnected) return <CardNote>Connect a wallet to execute this structure.</CardNote>;
+  if (!isConnected) return <CardNote>Connect a wallet to execute.</CardNote>;
 
   // Ship both currencies whenever the structure touches both — one offer, two tokens.
   const shipTokens = ([] as `0x${string}`[]).concat(
@@ -556,7 +552,7 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
                 })
               }
             >
-              {approveUsdc.busy ? "Approving…" : `Approve Aqua to draw ${needsApproval.symbol}`}
+              {approveUsdc.busy ? "Approving…" : `Approve ${needsApproval.symbol} for Aqua`}
             </Button>
           ) : !hasBacking ? (
             <Button
@@ -570,9 +566,7 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
                 })
               }
             >
-              {ship.busy
-                ? "Shipping…"
-                : `Back the structure with one Aqua offer${shipTokens.length > 1 ? " (both tokens)" : ""}`}
+              {ship.busy ? "Shipping…" : "Back with one Aqua offer"}
             </Button>
           ) : (
             <Button
@@ -587,9 +581,7 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
                 })
               }
             >
-              {write.busy
-                ? "Writing…"
-                : `Write ${sellLegs.length} leg${sellLegs.length > 1 ? "s" : ""} from one offer`}
+              {write.busy ? "Writing…" : `Write ${sellLegs.length} leg${sellLegs.length > 1 ? "s" : ""}`}
             </Button>
           )}
         </>
@@ -609,7 +601,7 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
                 })
               }
             >
-              {approveManager.busy ? "Approving…" : "Approve collateral for bought legs"}
+              {approveManager.busy ? "Approving…" : "Approve collateral"}
             </Button>
           ) : (
             <Button
@@ -624,21 +616,16 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
                 })
               }
             >
-              {buy.busy ? "Buying…" : `Buy ${buyLegs.length} leg${buyLegs.length > 1 ? "s" : ""} in one transaction`}
+              {buy.busy ? "Buying…" : `Buy ${buyLegs.length} leg${buyLegs.length > 1 ? "s" : ""}`}
             </Button>
           )}
           {overBuy.length > 0 ? (
             <CardNote tone="danger">
-              {overBuy.length === 1 ? "One leg asks" : `${overBuy.length} legs ask`} for more liquidity than
-              has been written at that strike, so the whole structure would revert. Resize with the red cap
-              on the leg, or write the strike first.
+              {overBuy.length === 1 ? "One leg asks" : `${overBuy.length} legs ask`} for more than has been
+              written. Resize with the cap on the leg.
             </CardNote>
           ) : (
-            <CardNote>
-              Bought legs post collateral directly rather than registering Aqua backing — but they still land
-              together: any leg that cannot fill reverts the whole structure, so a half-built spread is not a
-              reachable state.
-            </CardNote>
+            <CardNote>Bought legs post collateral directly and all land in one transaction.</CardNote>
           )}
         </>
       )}

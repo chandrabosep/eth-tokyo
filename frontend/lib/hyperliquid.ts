@@ -136,7 +136,7 @@ export const STRATEGIES: StrategyTemplate[] = [
     kind: "hedge",
     summary: "Buy a put below spot against the long perp.",
     effect:
-      "Floors the drawdown at the strike price. Gains dollar-for-dollar as ETH falls through the strike, directly offsetting the perp loss below that level.",
+      "Floors the drawdown at the strike. Gains dollar for dollar as ETH falls through it, offsetting the perp below that level.",
     cost: "costs premium",
     requires: "~10% of notional as collateral",
     legs: [{ strikeOffset: -2, isPut: true, side: "buy" }],
@@ -147,8 +147,7 @@ export const STRATEGIES: StrategyTemplate[] = [
     forSide: "long",
     kind: "hedge",
     summary: "Buy a put below spot, write one further below to fund it.",
-    effect:
-      "Cheaper protection. Covers the first leg of a drawdown; stops helping past the lower strike.",
+    effect: "Cheaper protection. Covers the first leg of a drawdown, then stops.",
     cost: "roughly financed",
     requires: "collateral on the bought leg, USDC backing on the written leg",
     legs: [
@@ -162,8 +161,7 @@ export const STRATEGIES: StrategyTemplate[] = [
     forSide: "long",
     kind: "yield",
     summary: "Write a call above spot. A yield play, not a perp hedge.",
-    effect:
-      "Earns premium on WETH you hold. It does not offset the perp — writing it requires posting WETH.",
+    effect: "Earns premium on WETH you hold. It does not offset the perp; writing it needs posted WETH.",
     cost: "earns premium",
     requires: "WETH inventory to post",
     legs: [{ strikeOffset: 2, isPut: false, side: "sell" }],
@@ -174,8 +172,7 @@ export const STRATEGIES: StrategyTemplate[] = [
     forSide: "short",
     kind: "hedge",
     summary: "Buy a call above spot against the short perp.",
-    effect:
-      "Caps squeeze risk. Gains as price runs through the strike, offsetting the short.",
+    effect: "Caps squeeze risk. Gains as price runs through the strike, offsetting the short.",
     cost: "costs premium",
     requires: "~10% of notional as collateral",
     legs: [{ strikeOffset: 2, isPut: false, side: "buy" }],
@@ -186,8 +183,7 @@ export const STRATEGIES: StrategyTemplate[] = [
     forSide: "short",
     kind: "hedge",
     summary: "Buy a call above spot, write one further above to fund it.",
-    effect:
-      "Cheaper squeeze cover. Protects the first leg of a rally, then stops.",
+    effect: "Cheaper squeeze cover. Protects the first leg of a rally, then stops.",
     cost: "roughly financed",
     requires: "collateral on the bought leg, WETH backing on the written leg",
     legs: [
@@ -201,8 +197,7 @@ export const STRATEGIES: StrategyTemplate[] = [
     forSide: "short",
     kind: "yield",
     summary: "Write a put below spot. A yield play, not a perp hedge.",
-    effect:
-      "Earns premium and sets the level you would accept assignment at. Adds long exposure on a drawdown.",
+    effect: "Earns premium and sets the level you would take assignment at. Adds long exposure on a drawdown.",
     cost: "earns premium",
     requires: "USDC to post",
     legs: [{ strikeOffset: -2, isPut: true, side: "sell" }],
