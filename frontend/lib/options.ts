@@ -169,6 +169,20 @@ export function usdPriceToTick(usd: number): number {
  * Premium is excluded — it depends on realised swap volume between now and close, which no
  * scenario table can know. Shorts earn it on top of these numbers; longs pay it.
  */
+/**
+ * Is this range earning anything right now?
+ *
+ * Premium here is `feeGrowthInside`, which only accrues while spot is inside the range. There is no
+ * theta: a written option two strikes away from spot does not decay in the writer's favour, it
+ * simply earns nothing at all until price arrives. The mirror is just as sharp — a long pays
+ * premium only while its range is live, so holding a far strike costs nothing to carry.
+ *
+ * Uniswap's own convention for "in range", so this agrees with the fee accounting to the tick.
+ */
+export function isLive(tickLower: number, tickUpper: number, tick: number): boolean {
+  return tick >= tickLower && tick < tickUpper;
+}
+
 export function legPnlAtPrice(
   liquidity: number,
   tickLower: number,

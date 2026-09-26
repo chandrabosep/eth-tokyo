@@ -21,6 +21,7 @@ import { useHookPricing, useSeries, useSpotTick } from "@/lib/useMarket";
 import { useHyperliquidAccount, type HlPosition } from "@/lib/hyperliquid";
 import {
   MARKET_VIEWS,
+  resolveIsPut,
   strategiesFor,
   strategiesForView,
   type MarketView,
@@ -73,6 +74,9 @@ function Strategies() {
   const active = actionable[0];
 
   const atm = useMemo(() => (tick !== undefined ? atmIndex(deployed.strikeTicks, tick) : 0), [tick]);
+  // A put owns the ticks below its strike, a call the ticks above. Which of the pair is currently
+  // earning therefore depends on the side of the strike spot sits on, and templates ask for it.
+  const spotBelowStrike = tick === undefined || tick < (deployed.strikeTicks[atm] ?? 0);
 
   const written = rows.reduce((a, r) => a + r.shortLiquidity, 0n);
   const bought = rows.reduce((a, r) => a + r.longLiquidity, 0n);
@@ -175,6 +179,7 @@ function Strategies() {
           size={size}
           setSize={setSize}
           atm={atm}
+          spotBelowStrike={spotBelowStrike}
           legs={legs}
           setLegs={setLegs}
         />
@@ -190,6 +195,7 @@ function Strategies() {
           others={others}
           positions={positions}
           atm={atm}
+          spotBelowStrike={spotBelowStrike}
           legs={legs}
           setLegs={setLegs}
         />
@@ -208,6 +214,7 @@ function ViewMode({
   size,
   setSize,
   atm,
+  spotBelowStrike,
   legs,
   setLegs,
 }: {
@@ -216,6 +223,7 @@ function ViewMode({
   size: string;
   setSize: (s: string) => void;
   atm: number;
+  spotBelowStrike: boolean;
   legs: BuiltLeg[];
   setLegs: (l: BuiltLeg[]) => void;
 }) {
@@ -269,6 +277,7 @@ function ViewMode({
             label={`Structures for “${chosen.label}”`}
             templates={strategiesForView(view)}
             atm={atm}
+            spotBelowStrike={spotBelowStrike}
             sizeEth={sizeEth}
             activeLegs={legs}
             onPick={setLegs}
@@ -296,6 +305,7 @@ function HedgeMode({
   others,
   positions,
   atm,
+  spotBelowStrike,
   legs,
   setLegs,
 }: {
@@ -309,6 +319,7 @@ function HedgeMode({
   others: HlPosition[];
   positions: HlPosition[];
   atm: number;
+  spotBelowStrike: boolean;
   legs: BuiltLeg[];
   setLegs: (l: BuiltLeg[]) => void;
 }) {
@@ -388,6 +399,7 @@ function HedgeMode({
               label={`Structures for a ${active.szi > 0 ? "long" : "short"} perp`}
               templates={strategiesFor(active.szi)}
               atm={atm}
+              spotBelowStrike={spotBelowStrike}
               sizeEth={Math.abs(active.szi)}
               activeLegs={legs}
               onPick={setLegs}
@@ -478,6 +490,7 @@ function PresetList({
   label,
   templates,
   atm,
+  spotBelowStrike,
   sizeEth,
   activeLegs,
   onPick,
@@ -485,6 +498,7 @@ function PresetList({
   label: string;
   templates: StrategyTemplate[];
   atm: number;
+  spotBelowStrike: boolean;
   sizeEth: number;
   activeLegs: BuiltLeg[];
   onPick: (legs: BuiltLeg[]) => void;
@@ -494,7 +508,7 @@ function PresetList({
   function handlePick(id: string) {
     const t = templates.find((x) => x.id === id)!;
     setSelectedId(id);
-    onPick(materialise(t, atm, sizeEth));
+    onPick(materialise(t, atm, sizeEth, spotBelowStrike));
   }
 
   // Clear selection when legs are cleared externally
@@ -512,7 +526,7 @@ function PresetList({
             (l) =>
               `${l.side === "sell" ? "write" : "buy"} ${strikeLabel(
                 Math.min(Math.max(atm + l.strikeOffset, 0), deployed.strikeTicks.length - 1),
-              )} ${l.isPut ? "put" : "call"}`,
+              )} ${resolveIsPut(l, spotBelowStrike) ? "put" : "call"}`,
           )
           .join(" · ");
 
@@ -536,6 +550,11 @@ function PresetList({
               </Badge>
             </div>
             <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-soft">{t.effect}</p>
+            {/* Premium here is a fee on swaps through the range, not a clock. When it moves is as
+                much a part of the structure as what it pays. */}
+            <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-soft">
+              <span className="font-bold text-ink">Premium:</span> {t.earns}
+            </p>
             <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">Needs {t.requires}.</p>
             <p className="mt-1 font-mono text-[11px] text-ink-faint">{legLine}</p>
           </button>

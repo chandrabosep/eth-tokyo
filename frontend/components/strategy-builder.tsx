@@ -22,6 +22,7 @@ import { useAquaOffers } from "@/lib/aqua";
 import {
   amount0ForLiquidity,
   fmt,
+  isLive,
   legPnlAtPrice,
   liquidityForAmount0,
   tickToUsdPrice,
@@ -29,7 +30,7 @@ import {
 } from "@/lib/options";
 import { useSeries, useSpotTick } from "@/lib/useMarket";
 import type { HlPosition } from "@/lib/hyperliquid";
-import type { StrategyTemplate } from "@/lib/strategies";
+import { resolveIsPut, type StrategyTemplate } from "@/lib/strategies";
 
 /** A concrete leg: a real strike index on this market, not an offset. */
 export type BuiltLeg = {
@@ -54,10 +55,19 @@ export function atmIndex(strikeTicks: number[], tick: number): number {
   return best;
 }
 
-export function materialise(template: StrategyTemplate, atm: number, sizeEth: number): BuiltLeg[] {
+/**
+ * `spotBelowStrike` decides the live half of the nearest strike — see `resolveIsPut`. Without it a
+ * template asking for "the range spot is in" would have to guess, and guess wrong half the time.
+ */
+export function materialise(
+  template: StrategyTemplate,
+  atm: number,
+  sizeEth: number,
+  spotBelowStrike = true,
+): BuiltLeg[] {
   return template.legs.map((l) => ({
     strikeIndex: Math.min(Math.max(atm + l.strikeOffset, 0), STRIKE_INDICES.length - 1),
-    isPut: l.isPut,
+    isPut: resolveIsPut(l, spotBelowStrike),
     side: l.side,
     sizeEth,
   }));
@@ -171,6 +181,16 @@ export function StrategyBuilder({
    *
    * Written legs are unconstrained: writing ADDS liquidity, so there is nothing to run out of.
    */
+  /** Which legs are earning right now — premium is `feeGrowthInside`, so only the in-range ones. */
+  const live = useMemo(
+    () =>
+      legs.map((leg) => {
+        const row = rows.find((r) => r.strikeIndex === leg.strikeIndex && r.isPut === leg.isPut);
+        return row && tick !== undefined ? isLive(row.tickLower, row.tickUpper, tick) : undefined;
+      }),
+    [legs, rows, tick],
+  );
+
   const depth = useMemo(
     () =>
       legs.map((leg) => {
@@ -212,6 +232,23 @@ export function StrategyBuilder({
                 </Badge>
                 <span className="text-[13px] font-bold tnum">{strikeLabel(leg.strikeIndex)}</span>
                 <span className="text-[13px] font-semibold text-ink-soft">{leg.isPut ? "put" : "call"}</span>
+                {/* The single most useful fact about a leg on this protocol, and one the ladder
+                    below cannot show: premium moves only while spot is inside the range. */}
+                {live[i] !== undefined && (
+                  <span
+                    className={cn(
+                      "rounded-pill border-rule px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.08em]",
+                      live[i] ? "border-lime-deep bg-lime-wash text-ink" : "border-line bg-paper-2 text-ink-faint",
+                    )}
+                    title={
+                      live[i]
+                        ? "Spot is inside this range, so premium is accruing on it now."
+                        : "Spot is outside this range. No premium accrues either way until price reaches it."
+                    }
+                  >
+                    {live[i] ? "collecting" : "idle"}
+                  </span>
+                )}
                 <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-xs text-ink-soft tnum">
                   {fmt(leg.sizeEth, 4)} <TokenIcon symbol="ETH" size={13} /> ETH
                 </span>
@@ -247,6 +284,12 @@ export function StrategyBuilder({
         {/* The integration's payoff: one curve spanning both venues. */}
         {scenarios.length > 0 && (
           <div className="rounded-md border-rule border-line bg-card p-3 shadow-xs">
+            <p className="mb-2 text-[11.5px] leading-relaxed text-ink-soft">
+              Position value only — <strong className="font-bold text-ink">premium is not in this curve</strong>
+              . A written leg is an LP range, so on its own it can only give value back as price moves through
+              it; the fee it collects while spot is inside is the whole of the writer&apos;s return, and it is
+              the buyer&apos;s whole cost.
+            </p>
             <PayoffChart
               points={scenarios}
               spot={spotNow}
