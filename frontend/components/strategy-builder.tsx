@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { CardNote } from "@/components/page-header";
 import { TokenIcon } from "@/components/token-icon";
 import { PayoffChart, type PayoffPoint } from "@/components/payoff-chart";
-import { TxNote, useTx } from "@/components/tx";
+import { BatchNote, BatchPlan, useAtomicBatch, useBatch, type BatchCall } from "@/components/batch";
 import { cn } from "@/lib/utils";
 
 import { aquaAbi, erc20Abi, optionsManagerAbi } from "@/lib/abi";
@@ -404,11 +404,8 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
   const sells = legs.filter((l) => l.side === "sell");
   const buys = legs.filter((l) => l.side === "buy");
 
-  const approveUsdc = useTx();
-  const approveManager = useTx();
-  const ship = useTx();
-  const write = useTx();
-  const buy = useTx();
+  const batch = useBatch();
+  const atomic = useAtomicBatch();
 
   const { data: usdcAllowance } = useReadContract({
     address: deployed.usdc,
@@ -518,11 +515,10 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
     query: { enabled: !!address && !!nextFree },
   });
 
-  const shipped = ship.isSuccess;
-  const wrote = write.isSuccess;
+  const done = batch.isSuccess;
   useEffect(() => {
-    if (shipped || wrote) refetchOffers();
-  }, [shipped, wrote, refetchOffers]);
+    if (done) refetchOffers();
+  }, [done, refetchOffers]);
 
   if (legs.length === 0) return null;
   if (!isConnected) return <CardNote>Connect a wallet to execute.</CardNote>;
@@ -538,116 +534,102 @@ function ExecuteLegs({ legs, onDone }: { legs: BuiltLeg[]; onDone: () => void })
     need.usdc > 0n ? [need.usdc * 10n] : [],
   );
 
-  const needsApproval =
-    need.weth > 0n && (wethAllowance ?? 0n) < need.weth * 10n
-      ? { token: deployed.weth, symbol: "WETH" }
-      : need.usdc > 0n && (usdcAllowance ?? 0n) < need.usdc * 10n
-        ? { token: deployed.usdc, symbol: "USDC" }
-        : undefined;
-  const needsManagerApproval =
-    (mgrUsdc ?? 0n) === 0n ? deployed.usdc : (mgrWeth ?? 0n) === 0n ? deployed.weth : undefined;
-  const hasBacking = !!covering;
+  /**
+   * The entire structure as one list of calls: approvals, the Aqua offer that backs every written
+   * leg, the write, and the buy.
+   *
+   * This is where batching earns its keep. A four-leg collar used to be an approval, a ship, a
+   * write and a buy — four trips to the wallet, with the position half-open in between if the user
+   * stopped answering. One list means the structure opens whole or not at all.
+   */
+  const calls: BatchCall[] = [];
+
+  if (sellLegs.length > 0) {
+    for (const t of [
+      { token: deployed.weth, symbol: "WETH", need: need.weth, allowance: wethAllowance ?? 0n },
+      { token: deployed.usdc, symbol: "USDC", need: need.usdc, allowance: usdcAllowance ?? 0n },
+    ]) {
+      if (t.need > 0n && t.allowance < t.need * 10n) {
+        calls.push({
+          label: `Approve ${t.symbol} for Aqua`,
+          to: t.token,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [deployed.aqua, maxUint256],
+        });
+      }
+    }
+    if (!covering && nextFree && strategy && shipTokens.length > 0) {
+      calls.push({
+        label: `Back ${sellLegs.length > 1 ? "every written leg" : "the written leg"} with one Aqua offer`,
+        to: deployed.aqua,
+        abi: aquaAbi,
+        functionName: "ship",
+        args: [deployed.optionsManager, strategy, shipTokens, shipAmounts],
+      });
+    }
+    const salt = covering?.salt ?? nextFree?.salt;
+    if (salt) {
+      calls.push({
+        label: `Write ${sellLegs.length} leg${sellLegs.length > 1 ? "s" : ""}`,
+        to: deployed.optionsManager,
+        abi: optionsManagerAbi,
+        functionName: "sellStrategy",
+        args: [address!, sellLegs, salt],
+      });
+    }
+  }
+
+  if (buyLegs.length > 0 && overBuy.length === 0) {
+    for (const t of [
+      { token: deployed.usdc, symbol: "USDC", allowance: mgrUsdc ?? 0n },
+      { token: deployed.weth, symbol: "WETH", allowance: mgrWeth ?? 0n },
+    ]) {
+      if (t.allowance === 0n) {
+        calls.push({
+          label: `Approve ${t.symbol} as collateral`,
+          to: t.token,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [deployed.optionsManager, maxUint256],
+        });
+      }
+    }
+    calls.push({
+      label: `Buy ${buyLegs.length} leg${buyLegs.length > 1 ? "s" : ""}`,
+      to: deployed.optionsManager,
+      abi: optionsManagerAbi,
+      functionName: "buyStrategy",
+      args: [buyLegs],
+    });
+  }
 
   return (
     <div className="flex flex-col gap-3">
-      {sells.length > 0 && (
-        <>
-          {needsApproval ? (
-            <Button
-              disabled={approveUsdc.busy}
-              onClick={() =>
-                approveUsdc.send({
-                  address: needsApproval.token,
-                  abi: erc20Abi,
-                  functionName: "approve",
-                  args: [deployed.aqua, maxUint256],
-                })
-              }
-            >
-              {approveUsdc.busy ? "Approving…" : `Approve ${needsApproval.symbol} for Aqua`}
-            </Button>
-          ) : !hasBacking ? (
-            <Button
-              disabled={!strategy || ship.busy || shipTokens.length === 0}
-              onClick={() =>
-                ship.send({
-                  address: deployed.aqua,
-                  abi: aquaAbi,
-                  functionName: "ship",
-                  args: [deployed.optionsManager, strategy!, shipTokens, shipAmounts],
-                })
-              }
-            >
-              {ship.busy ? "Shipping…" : "Back with one Aqua offer"}
-            </Button>
-          ) : (
-            <Button
-              variant="lime"
-              disabled={sellLegs.length === 0 || write.busy}
-              onClick={() =>
-                write.send({
-                  address: deployed.optionsManager,
-                  abi: optionsManagerAbi,
-                  functionName: "sellStrategy",
-                  args: [address!, sellLegs, covering!.salt],
-                })
-              }
-            >
-              {write.busy ? "Writing…" : `Write ${sellLegs.length} leg${sellLegs.length > 1 ? "s" : ""}`}
-            </Button>
-          )}
-        </>
+      <BatchPlan calls={calls} atomic={atomic} batch={batch} />
+
+      <Button
+        variant="lime"
+        disabled={calls.length === 0 || batch.busy || overBuy.length > 0}
+        onClick={() => batch.send(calls)}
+      >
+        {batch.busy ? "Opening…" : `Open the structure · ${legs.length} leg${legs.length > 1 ? "s" : ""}`}
+      </Button>
+
+      {overBuy.length > 0 ? (
+        <CardNote tone="danger">
+          {overBuy.length === 1 ? "One leg asks" : `${overBuy.length} legs ask`} for more than has been
+          written. Resize with the cap on the leg.
+        </CardNote>
+      ) : (
+        <CardNote>
+          Written legs draw on a single Aqua offer; bought legs post collateral directly. Nothing leaves
+          your wallet until the mint.
+        </CardNote>
       )}
 
-      {buys.length > 0 && (
-        <>
-          {needsManagerApproval ? (
-            <Button
-              disabled={approveManager.busy}
-              onClick={() =>
-                approveManager.send({
-                  address: needsManagerApproval,
-                  abi: erc20Abi,
-                  functionName: "approve",
-                  args: [deployed.optionsManager, maxUint256],
-                })
-              }
-            >
-              {approveManager.busy ? "Approving…" : "Approve collateral"}
-            </Button>
-          ) : (
-            <Button
-              variant="peri"
-              disabled={buyLegs.length === 0 || buy.busy || overBuy.length > 0}
-              onClick={() =>
-                buy.send({
-                  address: deployed.optionsManager,
-                  abi: optionsManagerAbi,
-                  functionName: "buyStrategy",
-                  args: [buyLegs],
-                })
-              }
-            >
-              {buy.busy ? "Buying…" : `Buy ${buyLegs.length} leg${buyLegs.length > 1 ? "s" : ""}`}
-            </Button>
-          )}
-          {overBuy.length > 0 ? (
-            <CardNote tone="danger">
-              {overBuy.length === 1 ? "One leg asks" : `${overBuy.length} legs ask`} for more than has been
-              written. Resize with the cap on the leg.
-            </CardNote>
-          ) : (
-            <CardNote>Bought legs post collateral directly and all land in one transaction.</CardNote>
-          )}
-        </>
-      )}
-
-      <TxNote tx={approveUsdc} label="Aqua approval" />
-      <TxNote tx={approveManager} label="Collateral approval" />
-      <TxNote tx={ship} label="Ship" />
-      <TxNote tx={write} label="Structure" />
-      <TxNote tx={buy} label="Buy" />
-      {(write.isSuccess || buy.isSuccess) && (
+      <BatchNote batch={batch} label="Structure" />
+      {batch.isSuccess && (
         <Button variant="outline" size="sm" onClick={onDone}>
           Clear builder
         </Button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { cookieStorage, createStorage, http } from "@wagmi/core";
+import { http } from "@wagmi/core";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
 import { defineChain } from "@reown/appkit/networks";
 
@@ -56,9 +56,6 @@ export const wagmiAdapter = new WagmiAdapter({
   networks: [baseFork],
   projectId: reownProjectId,
   transports: { [baseFork.id]: http(RPC) },
-  // Cookie storage, not localStorage, so the server renders the same connection state the browser
-  // is about to hydrate — see `cookieToInitialState` in app/layout.tsx.
-  storage: createStorage({ storage: cookieStorage }),
   ssr: true,
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { maxUint256, type Address } from "viem";
 
@@ -26,8 +26,8 @@ import {
   toRaw,
 } from "@/lib/options";
 import { useSeries, useSpotTick } from "@/lib/useMarket";
-import { TxNote, useTx } from "@/components/tx";
-import { TokenIcon, TokenLabel, TokenPair } from "@/components/token-icon";
+import { BatchNote, BatchPlan, useAtomicBatch, useBatch, type BatchCall } from "@/components/batch";
+import { TokenLabel, TokenPair } from "@/components/token-icon";
 
 export type Side = "call" | "put";
 type Direction = "sell" | "buy";
@@ -71,6 +71,16 @@ export function PositionSheet({
   useEffect(() => {
     setNotional(quoteInWeth ? "0.5" : "2000");
   }, [quoteInWeth, strikeIndex, isPut]);
+
+  /**
+   * Empty the size once a trade lands.
+   *
+   * The panel stays open on the confirmation, and leaving the old size in the box leaves a second
+   * identical trade armed and one click away — with the plan beneath it still reading like
+   * something outstanding. Zero disarms the button and empties the plan, so what is left on screen
+   * is only the receipt. `useCallback` because the panels fire this from an effect.
+   */
+  const clearSize = useCallback(() => setNotional("0"), []);
 
   const size = Number(notional) || 0;
 
@@ -146,19 +156,36 @@ export function PositionSheet({
                 <SegmentedItem value="buy">Buy</SegmentedItem>
               </SegmentedList>
             </SegmentedRoot>
+            {/* The two sides do opposite things with the same number in the box below — a writer
+                posts all of it, a buyer a tenth — and nothing on the panel used to say so. This
+                is where that belongs: next to the choice, before the figures. */}
+            <p className="pt-1 text-[12.5px] leading-relaxed text-ink-soft">
+              {direction === "sell" ? (
+                <>
+                  <strong className="font-extrabold text-ink">You sell it.</strong> Post the collateral
+                  behind the option and earn premium for as long as spot trades inside this range.
+                </>
+              ) : (
+                <>
+                  <strong className="font-extrabold text-ink">You buy it.</strong> Post a tenth of its
+                  size and pay premium for as long as spot trades inside this range.
+                </>
+              )}
+            </p>
           </div>
 
           <div className="space-y-1.5">
+            {/* "Notional" was the same word for two different jobs. This box is the POSITION's size
+                either way; what changes is the share of it you put up, which the card states. */}
             <Label htmlFor="notional" className="flex items-center gap-1.5">
-              Notional <TokenLabel symbol={quoteSymbol} size={13} className="tracking-normal" />
+              Position size <TokenLabel symbol={quoteSymbol} size={13} className="tracking-normal" />
             </Label>
             <Input id="notional" inputMode="decimal" value={notional} onChange={(e) => setNotional(e.target.value)} />
           </div>
 
           <div className="rounded-md border-rule border-line bg-card px-3.5 py-1 shadow-xs">
-            <Row label="Liquidity units" value={liquidity.toString()} mono />
             <Row
-              label={direction === "sell" ? "Collateral to post" : "Buyer collateral (10%)"}
+              label={direction === "sell" ? "You post" : "You post (10%)"}
               value={
                 legs.length ? (
                   <span className="inline-flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
@@ -176,11 +203,21 @@ export function PositionSheet({
               }
               mono
             />
+            {/* Named for what the trade does to the pool, not for the unit it is counted in:
+                writing mints this liquidity, buying takes it away. Grouped, because fifteen
+                unbroken digits read as noise. */}
+            <Row
+              label={direction === "sell" ? "Liquidity minted" : "Liquidity taken"}
+              value={liquidity.toLocaleString()}
+              mono
+            />
           </div>
 
           {overBuy && (
             <p className="rounded-md border-rule border-line bg-destructive/12 px-3.5 py-3 text-xs shadow-xs">
-              Only {available.toString()} liquidity units are written at this strike.
+              Bigger than what is on the book. Writers have left{" "}
+              <span className="font-mono">{available.toLocaleString()}</span> liquidity to buy at this
+              strike — a long can only take what someone else already wrote.
             </p>
           )}
 
@@ -189,9 +226,21 @@ export function PositionSheet({
               Connect a wallet to trade.
             </p>
           ) : direction === "sell" ? (
-            <SellPanel strikeIndex={strikeIndex} isPut={isPut} liquidity={liquidity} legs={legs} />
+            <SellPanel
+              strikeIndex={strikeIndex}
+              isPut={isPut}
+              liquidity={liquidity}
+              legs={legs}
+              onFilled={clearSize}
+            />
           ) : (
-            <BuyPanel strikeIndex={strikeIndex} isPut={isPut} liquidity={liquidity} disabled={overBuy} />
+            <BuyPanel
+              strikeIndex={strikeIndex}
+              isPut={isPut}
+              liquidity={liquidity}
+              disabled={overBuy}
+              onFilled={clearSize}
+            />
           )}
         </div>
       </SheetContent>
@@ -223,6 +272,10 @@ function Row({
  *   1. Ship — register wallet balance as backing. Nothing moves.
  *   2. Write — the option is minted and only then is collateral pulled from the wallet.
  *
+ * The user should not have to drive that split, so they do not: both steps and the approval in
+ * front of them go to the wallet as ONE batch (see components/batch.tsx). The story is still told —
+ * the plan lists the calls — but it is told, not performed.
+ *
  * Two things about step 1 that this panel exists to get right.
  *
  * The offer must cover the write, not merely exist. Aqua caps a pull at the registered balance and
@@ -240,11 +293,13 @@ function SellPanel({
   isPut,
   liquidity,
   legs,
+  onFilled,
 }: {
   strikeIndex: number;
   isPut: boolean;
   liquidity: bigint;
   legs: Leg[];
+  onFilled: () => void;
 }) {
   const { address } = useAccount();
   const [backing, setBacking] = useState<Record<string, string>>({});
@@ -307,16 +362,16 @@ function SellPanel({
     query: { enabled: !!address && required.length > 0 },
   });
 
-  const approve = useTx();
-  const ship = useTx();
-  const write = useTx();
+  const batch = useBatch();
+  const atomic = useAtomicBatch();
 
-  // Both of these change the registered balance, so the panel must re-read it to advance.
-  const shipped = ship.isSuccess;
-  const wrote = write.isSuccess;
+  // The write spends the offer's backing, so the panel has to re-read it afterwards.
+  const done = batch.isSuccess;
   useEffect(() => {
-    if (shipped || wrote) refetchOffers();
-  }, [shipped, wrote, refetchOffers]);
+    if (!done) return;
+    refetchOffers();
+    onFilled();
+  }, [done, refetchOffers, onFilled]);
 
   const enriched = required.map((t, i) => ({
     ...t,
@@ -325,215 +380,227 @@ function SellPanel({
     allowance: (tokenData?.[i * 2 + 1]?.result as bigint) ?? 0n,
   }));
 
-  const needsApproval = enriched.find((l) => l.allowance < l.amount);
   const funded = required.length > 0 && !!covering;
+  /** What the offer will register, in raw units, in the order Aqua expects. */
+  const shipAmounts = enriched.map((l) => toRaw(Number(backing[l.symbol]) || 0, l.decimals));
+  const underBacked = enriched.some((l, i) => shipAmounts[i] < l.amount);
+
+  /**
+   * The whole trade, as calls.
+   *
+   * Approvals first (Aqua pulls with `transferFrom`, so it needs one per token), then the offer if
+   * this write is not already covered, then the write itself. The salt is `nextFree`'s when the
+   * offer is being shipped in this same batch — the write has to name the offer that is about to
+   * exist, not one that does.
+   */
+  const calls: BatchCall[] = [];
+  if (liquidity > 0n && salt && (funded || (nextFree && strategy && !underBacked))) {
+    for (const l of enriched) {
+      if (l.allowance < l.amount) {
+        calls.push({
+          label: `Approve ${l.symbol} for Aqua`,
+          to: l.token,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [deployed.aqua, maxUint256],
+        });
+      }
+    }
+    if (!funded && nextFree && strategy) {
+      calls.push({
+        label: `Ship offer #${nextFree.index}`,
+        to: deployed.aqua,
+        abi: aquaAbi,
+        functionName: "ship",
+        args: [deployed.optionsManager, strategy, enriched.map((l) => l.token), shipAmounts],
+      });
+    }
+    calls.push({
+      label: "Write the option",
+      to: deployed.optionsManager,
+      abi: optionsManagerAbi,
+      functionName: "sellOptionViaAqua",
+      args: [address!, strikeIndex, isPut, liquidity, salt],
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-md border-rule border-line bg-card px-3.5 py-1 shadow-xs">
-        {enriched.map((l) => (
+      {/* Only the offer's side of the story lives here now. What this write costs is stated once,
+          above, as "You post" — printing it again beside the backing made two numbers out of one
+          fact and left the reader working out which was which. */}
+      {funded && covering && (
+        <div className="rounded-md border-rule border-line bg-card px-3.5 py-1 shadow-xs">
           <Row
-            key={l.symbol}
-            label={
-              <span className="inline-flex items-center gap-1.5">
-                <TokenIcon symbol={l.symbol} size={14} /> {l.symbol} needed / committed
+            label={`Backed by offer #${covering.index}`}
+            value={
+              <span className="inline-flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                {enriched.map((l) => (
+                  <span key={l.symbol} className="inline-flex items-center gap-1.5">
+                    {fmt(fromRaw(l.committed, l.decimals), l.decimals === 18 ? 5 : 2)}
+                    <TokenLabel symbol={l.symbol} size={13} />
+                  </span>
+                ))}
+                <span className="text-ink-faint">left</span>
               </span>
             }
-            value={`${fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)} / ${fmt(
-              fromRaw(l.committed, l.decimals),
-              l.decimals === 18 ? 5 : 2,
-            )}`}
             mono
           />
-        ))}
-        {covering && <Row label="Funded by offer" value={`#${covering.index}`} mono />}
-      </div>
+        </div>
+      )}
 
-      {!funded ? (
-        <>
-          {required.length === 0 ? (
-            <Note>Enter a size to see what this write needs.</Note>
-          ) : !nextFree ? (
-            <Note>
-              <strong className="text-foreground">Every offer slot is spent.</strong> Nothing is lost, the
-              tokens never left your wallet.
-            </Note>
-          ) : (
-            <>
-              {enriched.map((l) => (
-                <div key={l.symbol} className="space-y-1.5">
-                  <Label htmlFor={`ship-${l.symbol}`} className="flex items-center gap-1.5">
-                    Step 1 · Back an offer <TokenLabel symbol={l.symbol} size={13} className="tracking-normal" />
-                  </Label>
-                  <Input
-                    id={`ship-${l.symbol}`}
-                    inputMode="decimal"
-                    value={backing[l.symbol] ?? ""}
-                    onChange={(e) => setBacking((b) => ({ ...b, [l.symbol]: e.target.value }))}
-                  />
-                  {toRaw(Number(backing[l.symbol]) || 0, l.decimals) < l.amount && (
-                    <p className="text-[11px] text-destructive">
-                      Below the {fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)}{" "}
-                      <TokenLabel symbol={l.symbol} size={12} /> this write needs.
-                    </p>
-                  )}
-                </div>
-              ))}
-
-              {needsApproval ? (
-                <Button
-                  disabled={approve.busy}
-                  onClick={() =>
-                    approve.send({
-                      address: needsApproval.token,
-                      abi: erc20Abi,
-                      functionName: "approve",
-                      args: [deployed.aqua, maxUint256],
-                    })
-                  }
-                >
-                  {approve.busy ? "Approving…" : `Approve ${needsApproval.symbol} for Aqua`}
-                </Button>
-              ) : (
-                <Button
-                  disabled={
-                    !strategy ||
-                    ship.busy ||
-                    enriched.some((l) => toRaw(Number(backing[l.symbol]) || 0, l.decimals) < l.amount)
-                  }
-                  onClick={() =>
-                    ship.send({
-                      address: deployed.aqua,
-                      abi: aquaAbi,
-                      functionName: "ship",
-                      args: [
-                        deployed.optionsManager,
-                        strategy!,
-                        enriched.map((l) => l.token),
-                        enriched.map((l) => toRaw(Number(backing[l.symbol]) || 0, l.decimals)),
-                      ],
-                    })
-                  }
-                >
-                  {ship.busy ? "Shipping…" : `Ship offer #${nextFree.index}`}
-                </Button>
-              )}
-
-              <Note>
-                <strong className="text-foreground">Nothing leaves your wallet.</strong> Aqua registers the
-                balance as backing. The tokens stay yours and stay liquid.
-              </Note>
-            </>
-          )}
-        </>
+      {required.length === 0 ? (
+        <Note>Enter a size to see what this write needs.</Note>
+      ) : !funded && !nextFree ? (
+        <Note>
+          <strong className="text-foreground">Every offer slot is spent.</strong> Nothing is lost, the
+          tokens never left your wallet.
+        </Note>
       ) : (
         <>
+          {/* Only shown when an offer is actually being shipped. Aqua strategies are immutable, so
+              this number is the one decision in the flow that cannot be undone later — hence the
+              line under it saying what the default buys you. */}
+          {!funded &&
+            enriched.map((l, i) => (
+              <div key={l.symbol} className="space-y-1.5">
+                <Label htmlFor={`ship-${l.symbol}`} className="flex items-center gap-1.5">
+                  Back the offer with <TokenLabel symbol={l.symbol} size={13} className="tracking-normal" />
+                </Label>
+                <Input
+                  id={`ship-${l.symbol}`}
+                  inputMode="decimal"
+                  value={backing[l.symbol] ?? ""}
+                  onChange={(e) => setBacking((b) => ({ ...b, [l.symbol]: e.target.value }))}
+                />
+                {shipAmounts[i] < l.amount ? (
+                  <p className="text-[11px] text-destructive">
+                    Below the {fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)}{" "}
+                    <TokenLabel symbol={l.symbol} size={12} /> this write needs.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-ink-faint">
+                    This write needs {fmt(fromRaw(l.amount, l.decimals), l.decimals === 18 ? 5 : 2)}{" "}
+                    <TokenLabel symbol={l.symbol} size={12} />. Backing more lets you write again
+                    without shipping another offer — an offer cannot be topped up later.
+                  </p>
+                )}
+              </div>
+            ))}
+
+          <BatchPlan calls={calls} atomic={atomic} batch={batch} />
+
           <Button
-            disabled={liquidity === 0n || write.busy || !salt}
-            onClick={() =>
-              write.send({
-                address: deployed.optionsManager,
-                abi: optionsManagerAbi,
-                functionName: "sellOptionViaAqua",
-                args: [address!, strikeIndex, isPut, liquidity, salt!],
-              })
-            }
+            variant="lime"
+            disabled={calls.length === 0 || batch.busy}
+            onClick={() => batch.send(calls)}
           >
-            {write.busy ? "Writing…" : "Step 2 · Write the option"}
+            {batch.busy ? "Writing…" : "Write the option"}
           </Button>
+
           <Note>
-            <strong className="text-foreground">Now the collateral moves.</strong> The mint pulls exactly what
-            it needs, through Aqua.
+            <strong className="text-foreground">Nothing leaves your wallet until the mint.</strong> Aqua
+            registers the balance as backing; the write is what pulls it, and only what it needs.
           </Note>
         </>
       )}
 
-      <TxNote tx={approve} label="Approval" />
-      <TxNote tx={ship} label="Ship" />
-      <TxNote tx={write} label="Write" />
+      <BatchNote batch={batch} label="Write" />
     </div>
   );
 }
 
+/**
+ * Buying is one call plus whatever approvals are missing — so it is one click, always.
+ *
+ * Both allowances go in even when only one currency is owed: the collateral a long posts depends
+ * on where spot sits inside the range, and that can move between opening this panel and signing.
+ */
 function BuyPanel({
   strikeIndex,
   isPut,
   liquidity,
   disabled,
+  onFilled,
 }: {
   strikeIndex: number;
   isPut: boolean;
   liquidity: bigint;
   disabled: boolean;
+  onFilled: () => void;
 }) {
   const { address } = useAccount();
-  const approveUsdc = useTx();
-  const approveWeth = useTx();
-  const buy = useTx();
+  const batch = useBatch();
+  const atomic = useAtomicBatch();
 
-  const { data: usdcAllowance } = useReadContract({
-    address: deployed.usdc,
-    abi: erc20Abi,
-    functionName: "allowance",
-    args: address ? [address, deployed.optionsManager] : undefined,
+  const done = batch.isSuccess;
+  useEffect(() => {
+    if (done) onFilled();
+  }, [done, onFilled]);
+
+  const { data: allowances } = useReadContracts({
+    contracts: [
+      {
+        address: deployed.weth,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [address ?? "0x0", deployed.optionsManager],
+      },
+      {
+        address: deployed.usdc,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [address ?? "0x0", deployed.optionsManager],
+      },
+    ] as const,
     query: { enabled: !!address },
   });
-  const { data: wethAllowance } = useReadContract({
-    address: deployed.weth,
-    abi: erc20Abi,
-    functionName: "allowance",
-    args: address ? [address, deployed.optionsManager] : undefined,
-    query: { enabled: !!address },
-  });
 
-  const needUsdc = (usdcAllowance ?? 0n) === 0n;
-  const needWeth = (wethAllowance ?? 0n) === 0n;
-
-  if (needUsdc || needWeth) {
-    const tx = needUsdc ? approveUsdc : approveWeth;
-    const token = needUsdc ? deployed.usdc : deployed.weth;
-    const sym = needUsdc ? "USDC" : "WETH";
-    return (
-      <div className="flex flex-col gap-4">
-        <Button
-          disabled={tx.busy}
-          onClick={() =>
-            tx.send({
-              address: token,
-              abi: erc20Abi,
-              functionName: "approve",
-              args: [deployed.optionsManager, maxUint256],
-            })
-          }
-        >
-          {tx.busy ? "Approving…" : `Approve ${sym}`}
-        </Button>
-        <Note>Buyers post collateral directly. Only sellers route through Aqua.</Note>
-        <TxNote tx={tx} label="Approval" />
-      </div>
-    );
+  const calls: BatchCall[] = [];
+  for (const [i, t] of (
+    [
+      { token: deployed.weth, symbol: "WETH" },
+      { token: deployed.usdc, symbol: "USDC" },
+    ] as const
+  ).entries()) {
+    if (((allowances?.[i]?.result as bigint) ?? 0n) === 0n) {
+      calls.push({
+        label: `Approve ${t.symbol} as collateral`,
+        to: t.token,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [deployed.optionsManager, maxUint256],
+      });
+    }
+  }
+  if (liquidity > 0n) {
+    calls.push({
+      label: `Buy the ${isPut ? "put" : "call"}`,
+      to: deployed.optionsManager,
+      abi: optionsManagerAbi,
+      functionName: "buyOption",
+      args: [strikeIndex, isPut, liquidity],
+    });
   }
 
   return (
     <div className="flex flex-col gap-4">
+      <BatchPlan calls={calls} atomic={atomic} batch={batch} />
+
       <Button
-        disabled={disabled || liquidity === 0n || buy.busy}
-        onClick={() =>
-          buy.send({
-            address: deployed.optionsManager,
-            abi: optionsManagerAbi,
-            functionName: "buyOption",
-            args: [strikeIndex, isPut, liquidity],
-          })
-        }
+        variant="peri"
+        disabled={disabled || liquidity === 0n || batch.busy}
+        onClick={() => batch.send(calls)}
       >
-        {buy.busy ? "Buying…" : `Buy ${isPut ? "put" : "call"}`}
+        {batch.busy ? "Buying…" : `Buy ${isPut ? "put" : "call"}`}
       </Button>
+
       <Note>
         <strong className="text-foreground">This removes liquidity from the pool.</strong> That inversion is
-        what makes you long.
+        what makes you long. Buyers post collateral directly — only sellers route through Aqua.
       </Note>
-      <TxNote tx={buy} label="Buy" />
+
+      <BatchNote batch={batch} label="Buy" />
     </div>
   );
 }

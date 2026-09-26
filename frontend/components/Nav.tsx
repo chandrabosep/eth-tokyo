@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { useAppKit, useAppKitNetwork } from "@reown/appkit/react";
-import { AlertTriangle, Wallet } from "lucide-react";
+import { AlertTriangle, LogOut, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -140,11 +140,23 @@ function InjectedCluster() {
   );
 }
 
+/**
+ * Icon only. The word "Disconnect" was the widest thing in the cluster and the least used control
+ * in the app — it out-shouted the address beside it, which is the part people actually read.
+ * `title` gives the hover tooltip, `aria-label` the accessible name.
+ */
 function DisconnectButton() {
   const { disconnect } = useDisconnect();
   return (
-    <Button variant="outline" size="sm" onClick={() => disconnect()}>
-      Disconnect
+    <Button
+      variant="outline"
+      size="sm"
+      className="w-9 px-0"
+      title="Disconnect"
+      aria-label="Disconnect wallet"
+      onClick={() => disconnect()}
+    >
+      <LogOut aria-hidden="true" />
     </Button>
   );
 }

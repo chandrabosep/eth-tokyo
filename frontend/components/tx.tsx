@@ -82,6 +82,15 @@ function Shell({
  * the one imported here — silently, falling through to the string fallback with no sign anything
  * is wrong. Walking `cause` for the decoded payload works whichever copy threw.
  */
+/** viem wraps its errors, so the one that matters can sit a few `cause` levels down. */
+function named(error: unknown, name: string): boolean {
+  for (let e: unknown = error, depth = 0; e && depth < 12; depth++) {
+    if ((e as { name?: string }).name === name) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 function decodedRevert(error: unknown): { errorName?: string; args?: readonly unknown[] } | undefined {
   for (let e: unknown = error, depth = 0; e && depth < 12; depth++) {
     const data = (e as { data?: { errorName?: string; args?: readonly unknown[] } }).data;
@@ -92,6 +101,28 @@ function decodedRevert(error: unknown): { errorName?: string; args?: readonly un
 }
 
 export function revertMessage(error: unknown): string {
+  // Not a revert at all — the wallet is pointed somewhere else. Worth catching before anything
+  // else, because viem's own wording ends in "(id: 31337 - undefined)": wagmi hands it a bare
+  // `{ id }` with no name, and the sentence is about switching networks anyway, not about chains.
+  if (named(error, "ChainMismatchError")) {
+    const wallet = /wallet \(id: (\d+)\)/.exec((error as Error)?.message ?? "")?.[1];
+    return `Your wallet is on chain ${wallet ?? "another network"}. Switch it to the Base fork, chain ${
+      deployed.chainId
+    }, and try again.`;
+  }
+
+  // Not a revert either: the wallet and the node disagree about where this account's history is.
+  // Two ways to get here — a fork that reset under a wallet that cached the old count, or two
+  // transactions sent close enough together that the wallet reused a nonce. Both are fixed the
+  // same way, and neither is described by the node's three-word complaint.
+  const message = (error as Error)?.message ?? String(error);
+  if (/nonce too low|nonce has already been used/i.test(message)) {
+    return (
+      "Your wallet's nonce is behind this node — usually because the fork was reset under it. " +
+      "In MetaMask: Settings → Advanced → Clear activity tab data, then try again."
+    );
+  }
+
   const reverted = decodedRevert(error);
 
   if (reverted) {

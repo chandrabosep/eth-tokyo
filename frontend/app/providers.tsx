@@ -1,6 +1,6 @@
 "use client";
 
-import { WagmiProvider, cookieToInitialState, type Config } from "wagmi";
+import { WagmiProvider, type Config } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createAppKit } from "@reown/appkit/react";
 import { useState, type ReactNode } from "react";
@@ -58,16 +58,22 @@ if (reownProjectId) {
   });
 }
 
-export function Providers({ children, cookies }: { children: ReactNode; cookies?: string | null }) {
+/**
+ * No `cookieToInitialState` here, deliberately.
+ *
+ * Handing the server the wallet's last connection renders the connected address into the HTML —
+ * and the client only agrees if it can restore that same connection before hydrating. When it
+ * cannot (no extension, permission revoked, a wallet that answers slowly) React finds the server's
+ * address where the client put a placeholder and throws out the subtree. Starting disconnected on
+ * both sides costs one frame and cannot diverge.
+ */
+export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
     () => new QueryClient({ defaultOptions: { queries: { refetchInterval: 4000, retry: 1 } } }),
   );
-  // The wallet's last connection lives in a cookie, so the server can render the connected state
-  // instead of a "Connect wallet" button that flips a tick later.
-  const initialState = cookieToInitialState(wagmiConfig as Config, cookies);
 
   return (
-    <WagmiProvider config={wagmiConfig as Config} initialState={initialState}>
+    <WagmiProvider config={wagmiConfig as Config}>
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </WagmiProvider>
   );
