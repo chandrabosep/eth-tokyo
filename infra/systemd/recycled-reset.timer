@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily rebuild of the Recycled demo fork
+
+[Timer]
+# 04:00 JST. Persistent so a reboot does not skip a missed run.
+OnCalendar=*-*-* 04:00:00 Asia/Tokyo
+Persistent=true
+
+[Install]
+WantedBy=timers.target

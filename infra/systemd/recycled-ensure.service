@@ -1,0 +1,10 @@
+[Unit]
+Description=Redeploy the demo market if the chain came back empty
+After=recycled-anvil.service
+Wants=recycled-anvil.service
+
+[Service]
+Type=oneshot
+User=recycled
+WorkingDirectory=/opt/recycled
+ExecStart=/opt/recycled/infra/ensure-deployed.sh

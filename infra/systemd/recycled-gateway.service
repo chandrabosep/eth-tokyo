@@ -1,0 +1,23 @@
+[Unit]
+Description=Recycled RPC gateway + faucet
+After=recycled-anvil.service
+Wants=recycled-anvil.service
+
+[Service]
+Type=simple
+User=recycled
+WorkingDirectory=/opt/recycled/infra/gateway
+Environment=ANVIL_URL=http://127.0.0.1:8545
+Environment=PORT=8546
+ExecStart=/usr/bin/node /opt/recycled/infra/gateway/server.mjs
+Restart=always
+RestartSec=3
+
+# It only needs to talk to loopback and read its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

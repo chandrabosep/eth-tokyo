@@ -1,0 +1,12 @@
+[Unit]
+Description=Watchdog for the demo market deployment
+
+[Timer]
+# Shortly after boot, then every two minutes. anvil is in-memory, so a reboot or an OOM kill
+# leaves it forked but with no contracts; this is what notices and repairs that.
+OnBootSec=45s
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

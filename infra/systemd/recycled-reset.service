@@ -1,0 +1,9 @@
+[Unit]
+Description=Rebuild the Recycled demo fork from scratch
+
+[Service]
+Type=oneshot
+User=recycled
+WorkingDirectory=/opt/recycled
+EnvironmentFile=/etc/recycled/env
+ExecStart=/opt/recycled/infra/reset.sh

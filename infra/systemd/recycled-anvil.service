@@ -1,0 +1,24 @@
+[Unit]
+Description=anvil — pinned fork of Base for the Recycled demo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=recycled
+WorkingDirectory=/opt/recycled
+EnvironmentFile=/etc/recycled/env
+# Loopback only. Admin RPC (anvil_*, evm_*, debug_*) must not be reachable from outside this
+# box — the gateway is the only thing allowed to call it. Do not add --host 0.0.0.0 here.
+ExecStart=/home/recycled/.foundry/bin/anvil \
+  --fork-url ${BASE_RPC_URL} \
+  --fork-block-number ${FORK_BLOCK} \
+  --chain-id 31337 \
+  --host 127.0.0.1 \
+  --port 8545 \
+  --silent
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

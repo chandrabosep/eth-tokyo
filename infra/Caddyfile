@@ -1,0 +1,21 @@
+# Recycled demo fork — TLS terminator in front of the gateway.
+#
+# Vercel serves the app over https, and a browser will not let an https page call a plain http
+# RPC (Mixed Content, and it fails silently in the console). So the fork node MUST be behind TLS;
+# raw http://<elastic-ip>:8545 is not an option, which is why this file exists.
+#
+# Replace the hostname, put this at /etc/caddy/Caddyfile, then:  sudo systemctl reload caddy
+# Caddy gets and renews the certificate on its own, provided port 80 is reachable.
+
+fork.example.com {
+	encode zstd gzip
+
+	# Everything goes to the gateway, never straight to anvil. The gateway is what enforces the
+	# JSON-RPC method allowlist; Caddy cannot, because the method is in the POST body and viem
+	# sends batched arrays.
+	reverse_proxy 127.0.0.1:8546
+
+	header {
+		-Server
+	}
+}
