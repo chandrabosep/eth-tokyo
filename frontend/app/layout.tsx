@@ -25,7 +25,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Recycled",
+  title: "Mamori",
   description: "Perpetual options on reused Uniswap v4 liquidity, collateralised through 1inch Aqua",
 };
 

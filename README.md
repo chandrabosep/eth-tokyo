@@ -1,6 +1,11 @@
-# Recycled
+<img src="frontend/public/mamori-lockup.webp" alt="Mamori" width="620">
+
+# Mamori
 
 **A perpetual options market built on liquidity that already exists.**
+
+*Mamori* (守り) is Japanese for protection — which is what an options book is for, and what the
+torii in the mark stands over.
 
 Options are minted as Uniswap v4 concentrated liquidity positions. Seller collateral is an unlocked
 1inch Aqua balance that never leaves the seller's wallet until the option is actually written.

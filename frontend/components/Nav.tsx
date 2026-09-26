@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
@@ -42,7 +43,19 @@ export function Nav() {
     <>
       <header className="pt-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <h1 className="font-display text-[34px] font-extrabold leading-none tracking-[-0.04em]">Recycled</h1>
+          {/* The wordmark is the logo itself, not the name typed in the display face: its A has
+              no crossbar, and the lime dot sitting where one would be is the whole mark. Sized by
+              height so it lines up with the tab rail whatever the file's own dimensions are. */}
+          <h1 className="leading-none">
+            <Image
+              src="/mamori-wordmark.png"
+              alt="Mamori"
+              width={663}
+              height={120}
+              priority
+              className="h-[30px] w-auto"
+            />
+          </h1>
 
           <WalletCluster />
         </div>

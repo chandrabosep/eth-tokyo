@@ -18,6 +18,8 @@ import { baseFork, reownProjectId, wagmiAdapter, wagmiConfig } from "../lib/wagm
  * through the WalletConnect relay and the relay is what the id authenticates. Nav falls back to a
  * direct injected connect in that case.
  */
+const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? (typeof window === "undefined" ? "" : window.location.origin);
+
 if (reownProjectId) {
   createAppKit({
     adapters: [wagmiAdapter],
@@ -25,13 +27,14 @@ if (reownProjectId) {
     defaultNetwork: baseFork,
     projectId: reownProjectId,
     metadata: {
-      name: "Recycled",
+      name: "Mamori",
       description: "Perpetual options on reused Uniswap v4 liquidity, collateralised through 1inch Aqua",
       // WalletConnect shows this to the wallet alongside the connection request, and compares it
       // with the origin the request actually came from. It has to be the deployed URL, not a
       // hardcoded one, or the wallet flags the session as unverified.
-      url: process.env.NEXT_PUBLIC_APP_URL ?? (typeof window === "undefined" ? "" : window.location.origin),
-      icons: [],
+      url: appUrl,
+      // The wallet shows this beside the connection request, so it has to be an absolute URL.
+      icons: appUrl ? [`${appUrl}/icon.png`] : [],
     },
     features: {
       // Off: the counter does not need to know, and nobody opted into it.
