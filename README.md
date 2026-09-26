@@ -5,8 +5,8 @@
 *Mamori* (守り) is Japanese for protection — which is what an options book is for, and what the
 torii in the mark stands over.
 
-Perpetual options, minted as Uniswap v4 liquidity. Premium is the pool's own swap fee, so there is
-no oracle and no pricing model. Seller collateral is a 1inch Aqua balance that never leaves the
+Perpetual options, minted as **Uniswap v4** liquidity. Premium is the pool's own swap fee, so there is
+no oracle and no pricing model. Seller collateral is a **1inch Aqua** balance that never leaves the
 seller's wallet until an option is actually written.
 
 | | |
