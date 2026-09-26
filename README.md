@@ -80,9 +80,10 @@ A buyer posts ~10% collateral against notional, because the mechanism is "invert
 position", not "source new capital per trade"
 (`test_buyOption_removesLiquidityAndCostsTenPercent`).
 
-**3. Large traders get a way to hedge.**
-A delta dashboard reads net WETH exposure across open positions and flattens it with a single
-1inch-routed spot swap.
+**3. Traders get a way to hedge.**
+The Strategies tab reads a live Hyperliquid perp and builds cover against it on this market — a
+floor under a long, squeeze cover over a short — with the combined payoff drawn before anything is
+signed.
 
 ---
 
@@ -185,9 +186,17 @@ a half-built structure unreachable — any leg that cannot fill reverts the whol
 at inception against the capital posted: a long removed range amounts `(a0, a1)` and must restore
 `(b0, b1)`, and at open `b == a`. Exposure appears only as the range recomposes. So the builder
 shows a **payoff curve and table across the strike ladder** — perp P&L, options P&L, combined —
-which is both correct and what a hedger actually needs. The curve is swept at 96 prices so the kink
-at each strike is visible; the table quotes the ladder itself so the numbers can be read exactly.
-Premium is excluded from both, because it depends on realised swap volume between now and close.
+which is both correct and what a hedger actually needs. Against a perp the curve spans spot ±25%, so
+a floor can be seen holding through a real crash; standing alone it spans the ladder. Either way it
+is sampled densely enough that the kink at each strike is visible, and the table prices the ladder
+itself so the numbers can be read exactly. Premium is excluded from both, because it depends on
+realised swap volume between now and close.
+
+Above the chart, a hedge gets three answers: whether the combined loss is capped at all (read from
+the slope of the far tails, which is also how many ETH are left uncovered), what a 25% move against
+the perp does with and without the cover, and what the bought legs cost to hold — nothing while
+spot is outside their ranges, and roughly one pool fee on their notional each time price trades
+through one.
 
 **You can only buy what someone wrote.** A long here is not minted — it is written liquidity
 removed from the pool and handed over — so a strike with no short behind it cannot be bought at any
@@ -253,9 +262,6 @@ as topping an offer up. That shapes the UI more than anything else in this integ
   checks the registered balance first and reverts with
   `InsufficientAquaBacking(token, required, available)`.
 
-**Aggregation API** (Classic Swap v6.1) is the separate, smaller use: the Hedge page reads net delta
-across open legs and flattens it with one routed spot swap.
-
 ---
 
 ## What's built vs. what's roadmap
@@ -287,8 +293,6 @@ These are marked in the code where they occur, not buried here:
   liquidation, no bad-debt socialisation.
 - **Position accounting is keyed by `(owner, tokenId)`.** The ERC-1155 is a receipt; transferring it
   does not move the underlying accounting.
-- **Delta is position delta, not a Black–Scholes greek.** It ignores gamma, so the hedge is a
-  snapshot.
 - **An Aqua strategy encodes no minimum premium**, so a matcher picks the moment of execution.
   Production would sign a price band into the strategy bytes.
 
@@ -379,16 +383,7 @@ Or import a demo key instead:
 | Seller | `0x260529A5889B22dB02E0e8c1F90A7415084dF54E` | `0xaab17b89d7376948ee5710c0a73b05f449c86946b1bc6da38c89e0803997992f` |
 | Buyer | `0x3F8bC758CBCc3bB199FC7799f96D24aeEf242999` | `0x14ab088b7dcb56ff0099d87d5eb505efa89faad5d92be065a89817cf983b8152` |
 
-Or inspect either without connecting: `?as=0x2605…` on the Positions and Hedge pages.
-
-For the live 1inch hedge, add a key to `frontend/.env.local`:
-
-```
-ONEINCH_API_KEY=your_key_here
-```
-
-Without it the Hedge page still computes and displays delta, and says plainly that the key is
-missing rather than failing.
+Or inspect either without connecting: `?as=0x2605…` on the Positions page.
 
 ### Tests
 
@@ -420,8 +415,9 @@ forge test --match-test "test_vol_" -vv
 4. **Buy half of it.** Liquidity leaves the pool; the buyer posts ~10% of notional.
 5. **Swap against the pool.** Premium accrues on the Positions page, read live from
    `feeGrowthInside`. Point out the seller earns exactly double what the half-size buyer owes.
-6. **Open the Hedge tab.** Net delta +0.188 WETH for the seller, −0.094 for the buyer. One click
-   routes the flattening swap through 1inch.
+6. **Hedge a perp.** On Strategies → *Hedge a perp*, paste a Hyperliquid address (or *Try an
+   example*) and pick *Floor*. The chart shows the perp's loss going flat below the strike, and the
+   whole structure opens in one click.
 
 ---
 
@@ -455,5 +451,5 @@ test/
   AquaFork.t.sol            against real Base mainnet contracts
 script/                     deploy + seed
 demo/                       anvil fork, one-shot setup, and the churn loop
-frontend/                   Next.js: Trade, Positions, Hedge
+frontend/                   Next.js: Chain, Strategies, Positions, Faucet
 ```

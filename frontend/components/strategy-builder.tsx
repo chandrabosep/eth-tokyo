@@ -28,7 +28,7 @@ import {
   tickToUsdPrice,
   usdPriceToTick,
 } from "@/lib/options";
-import { useSeries, useSpotTick } from "@/lib/useMarket";
+import { useHookPricing, useSeries, useSpotTick, type SeriesRow } from "@/lib/useMarket";
 import type { HlPosition } from "@/lib/hyperliquid";
 import { resolveIsPut, type StrategyTemplate } from "@/lib/strategies";
 
@@ -40,6 +40,15 @@ export type BuiltLeg = {
   /** Size in underlying units (WETH), matched to the perp it hedges. */
   sizeEth: number;
 };
+
+type SizedLeg = { row: SeriesRow; liq: number; isLong: boolean };
+
+/**
+ * The move a hedge is judged against: how far the chart reaches either side of spot, and the
+ * stress case quoted beside it. A quarter is a bad week for ETH, not a black swan — big enough that
+ * a floor visibly holds, small enough that the ladder's kinks stay readable on the same axis.
+ */
+const HEDGE_MOVE = 0.25;
 
 /** The ladder index nearest to spot — the anchor every template offsets from. */
 export function atmIndex(strikeTicks: number[], tick: number): number {
@@ -87,7 +96,25 @@ export function StrategyBuilder({
   const { address } = useAccount();
   const { tick } = useSpotTick();
   const { rows } = useSeries();
+  const pricing = useHookPricing();
   const spot = tick !== undefined ? tickToUsdPrice(tick) : undefined;
+
+  /** Each leg's liquidity, worked out once — it does not depend on the scenario price. */
+  const sized = useMemo(
+    () =>
+      legs
+        .map((leg) => {
+          const row = rows.find((r) => r.strikeIndex === leg.strikeIndex && r.isPut === leg.isPut);
+          if (!row) return null;
+          // Sized by the range's FULL underlying capacity, not its composition right now: an
+          // out-of-the-money put holds zero WETH at spot, so sizing off the current amount0 would
+          // collapse every protective leg to zero liquidity.
+          const liq = liquidityForAmount0(leg.sizeEth * 10 ** WETH_DECIMALS, row.tickLower, row.tickUpper);
+          return { row, liq, isLong: leg.side === "buy" };
+        })
+        .filter(Boolean) as SizedLeg[],
+    [legs, rows],
+  );
 
   /**
    * Payoff across prices, not a single greek.
@@ -101,62 +128,114 @@ export function StrategyBuilder({
    * Premium is excluded: it depends on realised swap volume between now and close. Written legs
    * earn it on top of these numbers, bought legs pay it.
    */
-  const scenarios = useMemo<PayoffPoint[]>(() => {
-    if (tick === undefined) return [];
-    const ladder = deployed.strikeUsd ?? [];
-    if (ladder.length === 0) return [];
-
-    // Sweep a little past both ends of the ladder so the curve's flat wings are visible, and
-    // sample densely enough that the kinks at each strike read as kinks rather than corners.
-    const step = ladder.length > 1 ? ladder[1] - ladder[0] : 50;
-    const lo = ladder[0] - step;
-    const hi = ladder[ladder.length - 1] + step;
-    const SAMPLES = 96;
-
-    // Precompute each leg's liquidity once; it does not depend on the scenario price.
-    const sized = legs
-      .map((leg) => {
-        const row = rows.find((r) => r.strikeIndex === leg.strikeIndex && r.isPut === leg.isPut);
-        if (!row) return null;
-        // Sized by the range's FULL underlying capacity, not its composition right now: an
-        // out-of-the-money put holds zero WETH at spot, so sizing off the current amount0 would
-        // collapse every protective leg to zero liquidity.
-        const liq = liquidityForAmount0(leg.sizeEth * 10 ** WETH_DECIMALS, row.tickLower, row.tickUpper);
-        return { row, liq, isLong: leg.side === "buy" };
-      })
-      .filter(Boolean) as { row: (typeof rows)[number]; liq: number; isLong: boolean }[];
-
-    const out: PayoffPoint[] = [];
-    for (let i = 0; i < SAMPLES; i++) {
-      const price = lo + ((hi - lo) * i) / (SAMPLES - 1);
+  const valueAt = useMemo(() => {
+    if (tick === undefined) return undefined;
+    return (price: number): PayoffPoint => {
       const sTick = usdPriceToTick(price);
       const perp = position ? position.szi * (price - position.entryPx) : 0;
       let opts = 0;
       for (const l of sized) {
         opts += legPnlAtPrice(l.liq, l.row.tickLower, l.row.tickUpper, tick, sTick, price, l.isLong);
       }
-      out.push({ price, perp, opts, total: perp + opts });
-    }
-    return out;
-  }, [legs, rows, tick, position]);
+      return { price, perp, opts, total: perp + opts };
+    };
+  }, [sized, tick, position]);
 
-  const spotNow = tick !== undefined ? tickToUsdPrice(tick) : undefined;
-
-  /** The sweep sampled back down to just the ladder strikes, for the exact-number table. */
-  const ladderRows = useMemo<PayoffPoint[]>(() => {
+  const scenarios = useMemo<PayoffPoint[]>(() => {
+    if (!valueAt || spot === undefined) return [];
     const ladder = deployed.strikeUsd ?? [];
-    return ladder.map((price) => {
-      let best = scenarios[0];
-      for (const s of scenarios) {
-        if (Math.abs(s.price - price) < Math.abs(best.price - price)) best = s;
-      }
-      return best ? { ...best, price } : { price, perp: 0, opts: 0, total: 0 };
-    });
-  }, [scenarios]);
+    if (ladder.length === 0) return [];
 
-  // Quoted from the ladder rows, not the dense sweep, so the prose matches the table on screen.
-  const worstUnhedged = ladderRows.length ? Math.min(...ladderRows.map((r) => r.perp), 0) : 0;
-  const worstHedged = ladderRows.length ? Math.min(...ladderRows.map((r) => r.total), 0) : 0;
+    // Standing alone, sweep a little past both ends of the ladder so the curve's flat wings are
+    // visible. Against a perp that undersells the point: the ladder only spans about ±8%, so a
+    // floor looked like a short flat stub. Reach far enough that a real crash (or squeeze) is on
+    // the chart, and the cover can be seen holding through it.
+    const step = ladder.length > 1 ? ladder[1] - ladder[0] : 50;
+    let lo = ladder[0] - step;
+    let hi = ladder[ladder.length - 1] + step;
+    if (position) {
+      lo = Math.min(lo, Math.floor((spot * (1 - HEDGE_MOVE)) / step) * step);
+      hi = Math.max(hi, Math.ceil((spot * (1 + HEDGE_MOVE)) / step) * step);
+    }
+    // Dense enough that each strike's ~1.2%-wide range still gets several samples, so the kinks
+    // read as kinks rather than corners.
+    const SAMPLES = position ? 192 : 96;
+
+    const out: PayoffPoint[] = [];
+    for (let i = 0; i < SAMPLES; i++) out.push(valueAt(lo + ((hi - lo) * i) / (SAMPLES - 1)));
+    return out;
+  }, [valueAt, spot, position]);
+
+  const spotNow = spot;
+
+  /** The ladder strikes, priced exactly rather than read off the nearest sample of the sweep. */
+  const ladderRows = useMemo<PayoffPoint[]>(
+    () => (valueAt ? (deployed.strikeUsd ?? []).map(valueAt) : []),
+    [valueAt],
+  );
+
+  /**
+   * Is the combined loss capped, and what does a real move against the perp do?
+   *
+   * Outside every leg's range each payoff is linear in price, so the far tails settle whether there
+   * is a cap at all: if the combined line still slopes the wrong way out there, the loss keeps
+   * growing with the move and there is no number to quote — and the slope itself is how many ETH
+   * are left uncovered. When both tails are flat or favourable, the worst case is the lowest point
+   * anywhere: a tail, or somewhere through the ranges, which the sweep covers.
+   */
+  const risk = useMemo(() => {
+    if (!valueAt || !position || spot === undefined || scenarios.length === 0) return undefined;
+    const edges = sized.flatMap((l) => [tickToUsdPrice(l.row.tickLower), tickToUsdPrice(l.row.tickUpper)]);
+    const lowEdge = Math.min(spot, ...edges);
+    const highEdge = Math.max(spot, ...edges);
+    const slope = (a: number, b: number) => (valueAt(a).total - valueAt(b).total) / (a - b);
+
+    // In ETH: what is still exposed as price falls below every range, or rises above them.
+    const exposedDown = Math.max(slope(lowEdge / 2, lowEdge / 4), 0);
+    const exposedUp = Math.max(-slope(highEdge * 4, highEdge * 2), 0);
+    const tol = 1e-6 * Math.max(1, Math.abs(position.szi));
+    const capped = exposedDown <= tol && exposedUp <= tol;
+    const worst = Math.min(
+      valueAt(lowEdge / 4).total,
+      valueAt(highEdge * 4).total,
+      ...scenarios.map((s) => s.total),
+      ...ladderRows.map((r) => r.total),
+    );
+
+    const long = position.szi > 0;
+    const exposed = long ? exposedDown : exposedUp;
+    return {
+      long,
+      capped,
+      worst,
+      // Quoted for the side the perp loses on. If that side is covered but there is still no cap,
+      // a written leg has overshot the perp and the loss runs the other way instead.
+      exposed: exposed > tol ? exposed : 0,
+      exposedFrom: long ? lowEdge : highEdge,
+      stress: valueAt(spot * (long ? 1 - HEDGE_MOVE : 1 + HEDGE_MOVE)),
+    };
+  }, [valueAt, position, spot, sized, scenarios, ladderRows]);
+
+  /**
+   * What the bought legs cost to hold.
+   *
+   * A long pays `feeGrowthInside` on its liquidity, and one full pass of price through a range
+   * generates fee growth worth the pool fee on that range's whole notional — in either direction,
+   * since the range's USDC side is its ETH side times the range's geometric mid. So a pass costs
+   * roughly `fee × size × mid`, and time spent outside the range costs nothing at all.
+   */
+  const rent = useMemo(() => {
+    const fee = pricing.currentFee / 1e6;
+    const bought = sized.filter((l) => l.isLong);
+    const passes = bought.map((l) => {
+      const lo = tickToUsdPrice(l.row.tickLower);
+      const hi = tickToUsdPrice(l.row.tickUpper);
+      const eth = amount0ForLiquidity(l.liq, l.row.tickLower, l.row.tickUpper) / 10 ** WETH_DECIMALS;
+      return { lo, hi, usd: eth * Math.sqrt(lo * hi) * fee };
+    });
+    const paying = tick !== undefined && bought.some((l) => isLive(l.row.tickLower, l.row.tickUpper, tick));
+    return { fee, passes, paying };
+  }, [sized, pricing.currentFee, tick]);
 
   /** The standalone summary: the extremes of the structure, and the prices that produce them. */
   const outcome = useMemo(() => {
@@ -281,6 +360,9 @@ export function StrategyBuilder({
 
         <AddLeg onAdd={(l) => setLegs([...legs, l])} defaultSize={Math.abs(position?.szi ?? 0) || 1} />
 
+        {/* The answer a hedger came for, before the chart that proves it. */}
+        {risk && legs.length > 0 && <HedgeOutcome risk={risk} rent={rent} />}
+
         {/* The integration's payoff: one curve spanning both venues. */}
         {scenarios.length > 0 && (
           <div className="rounded-md border-rule border-line bg-card p-3 shadow-xs">
@@ -337,30 +419,16 @@ export function StrategyBuilder({
           </div>
         )}
 
-        {legs.length > 0 &&
-          (position ? (
-            <CardNote tone={worstHedged > worstUnhedged ? "lime" : "default"}>
-              {worstHedged > worstUnhedged ? (
-                <>
-                  <strong className="font-extrabold text-ink">Worst case improves.</strong> Perp alone bottoms
-                  at {usd(worstUnhedged)}, hedged at {usd(worstHedged)}.
-                </>
-              ) : (
-                <>These legs do not improve the worst case. Fine for yield, but it is not protection.</>
-              )}
-            </CardNote>
-          ) : (
-            outcome && (
-              // Standing alone there is nothing to compare against, so the useful summary is the
-              // shape of the thing itself: how bad it gets, how good, and where.
-              <CardNote tone={outcome.best > 0 ? "lime" : "default"}>
-                <strong className="font-extrabold text-ink">Across this ladder:</strong> worst{" "}
-                {usd(outcome.worst)} at ${outcome.worstAt.toLocaleString()}, best {usd(outcome.best)} at $
-                {outcome.bestAt.toLocaleString()}. Premium sits on top — written legs earn it, bought legs
-                pay it.
-              </CardNote>
-            )
-          ))}
+        {legs.length > 0 && !position && outcome && (
+          // Standing alone there is nothing to compare against, so the useful summary is the
+          // shape of the thing itself: how bad it gets, how good, and where.
+          <CardNote tone={outcome.best > 0 ? "lime" : "default"}>
+            <strong className="font-extrabold text-ink">Across this ladder:</strong> worst{" "}
+            {usd(outcome.worst)} at ${outcome.worstAt.toLocaleString()}, best {usd(outcome.best)} at $
+            {outcome.bestAt.toLocaleString()}. Premium sits on top — written legs earn it, bought legs
+            pay it.
+          </CardNote>
+        )}
 
         {depth.some((d) => d?.short) && (
           <CardNote tone="danger">
@@ -392,6 +460,116 @@ function Money({ v, strong, muted }: { v: number; strong?: boolean; muted?: bool
       {v > 0 ? "+" : ""}
       {fmt(v, 2)}
     </span>
+  );
+}
+
+/** Whole dollars, for prices: $2,569, not $2,568.94. */
+function usd0(v: number): string {
+  return `$${fmt(v, 0)}`;
+}
+
+type Risk = {
+  long: boolean;
+  capped: boolean;
+  worst: number;
+  exposed: number;
+  exposedFrom: number;
+  stress: PayoffPoint;
+};
+
+type Rent = { fee: number; passes: { lo: number; hi: number; usd: number }[]; paying: boolean };
+
+/**
+ * The three things a hedger asks, in the order they ask them: is my loss capped now, what does a
+ * bad week look like with and without this, and what does it cost me to hold.
+ */
+function HedgeOutcome({ risk, rent }: { risk: Risk; rent: Rent }) {
+  const move = risk.long ? "falls" : "rallies";
+  const helps = risk.stress.total > risk.stress.perp + 0.005;
+  const pct = `${(rent.fee * 100).toFixed(2)}%`;
+
+  let rentNote: string;
+  if (rent.passes.length === 0) {
+    rentNote = "Nothing bought, so nothing to pay. Written legs earn instead.";
+  } else if (rent.fee === 0) {
+    rentNote = "Reading today's fee…";
+  } else if (rent.passes.length === 1) {
+    const p = rent.passes[0];
+    rentNote = `≈ ${usd(p.usd)} each time ETH trades through ${usd0(p.lo)}–${usd0(p.hi)}, at today's ${pct} fee.`;
+  } else {
+    const costs = rent.passes.map((p) => p.usd);
+    rentNote = `≈ ${usd(Math.min(...costs))}–${usd(Math.max(...costs))} each time ETH trades through a bought range, at today's ${pct} fee.`;
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="grid overflow-hidden rounded-md border-rule border-line bg-card shadow-xs sm:grid-cols-3">
+        <Outcome
+          label="Max loss"
+          value={risk.capped ? (risk.worst < 0 ? usd(risk.worst) : "None") : "No cap"}
+          tone={risk.capped ? "pos" : "neg"}
+          note={
+            risk.capped
+              ? `However far ETH ${move}. The perp alone has no cap.`
+              : risk.exposed > 0
+                ? `${fmt(risk.exposed, 4)} ETH still exposed ${risk.long ? "below" : "above"} ${usd0(risk.exposedFrom)}.`
+                : `Loss keeps growing if ETH ${risk.long ? "rallies" : "falls"}.`
+          }
+          lead
+        />
+        <Outcome
+          label={`If ETH ${move} 25%`}
+          value={usd(risk.stress.total)}
+          tone={helps ? "pos" : "neg"}
+          note={`To ${usd0(risk.stress.price)}. The perp alone: ${usd(risk.stress.perp)}.`}
+        />
+        <Outcome
+          label="Rent right now"
+          value={rent.paying ? "Paying" : "$0"}
+          tone={rent.paying ? "neg" : "pos"}
+          note={rentNote}
+        />
+      </div>
+      {!helps && (
+        <CardNote>
+          These legs do not protect the perp against a 25% move. Fine for yield, but it is not protection.
+        </CardNote>
+      )}
+    </div>
+  );
+}
+
+function Outcome({
+  label,
+  value,
+  note,
+  tone,
+  lead,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  tone: "pos" | "neg";
+  lead?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "border-b border-line px-3.5 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0",
+        lead && tone === "pos" && "bg-lime-wash",
+      )}
+    >
+      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-soft">{label}</div>
+      <div
+        className={cn(
+          "mt-1 text-[20px] font-extrabold leading-none tracking-[-0.02em] tnum",
+          tone === "pos" ? "text-lime-deep" : "text-peri-deep",
+        )}
+      >
+        {value}
+      </div>
+      <p className="mt-1.5 text-[11px] leading-snug text-ink-soft">{note}</p>
+    </div>
   );
 }
 

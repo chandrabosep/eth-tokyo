@@ -250,7 +250,7 @@ export function PayoffChart({
         <span className="font-mono text-[11px] text-ink-soft tnum">
           {active ? (
             <>
-              ${active.price.toLocaleString()} → combined{" "}
+              ${active.price.toLocaleString(undefined, { maximumFractionDigits: 0 })} → combined{" "}
               <strong className={cn("font-bold", active.total >= 0 ? "text-lime-deep" : "text-peri-deep")}>
                 {active.total >= 0 ? "+" : ""}
                 {fmt(active.total, 2)}

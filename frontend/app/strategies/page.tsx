@@ -77,6 +77,8 @@ function Strategies() {
   // A put owns the ticks below its strike, a call the ticks above. Which of the pair is currently
   // earning therefore depends on the side of the strike spot sits on, and templates ask for it.
   const spotBelowStrike = tick === undefined || tick < (deployed.strikeTicks[atm] ?? 0);
+  // Both are needed before a card can be picked: spot places the legs, the series size them.
+  const ready = tick !== undefined && rows.some((r) => r.tickUpper !== 0);
 
   const written = rows.reduce((a, r) => a + r.shortLiquidity, 0n);
   const bought = rows.reduce((a, r) => a + r.longLiquidity, 0n);
@@ -180,6 +182,7 @@ function Strategies() {
           setSize={setSize}
           atm={atm}
           spotBelowStrike={spotBelowStrike}
+          ready={ready}
           legs={legs}
           setLegs={setLegs}
         />
@@ -196,6 +199,7 @@ function Strategies() {
           positions={positions}
           atm={atm}
           spotBelowStrike={spotBelowStrike}
+          ready={ready}
           legs={legs}
           setLegs={setLegs}
         />
@@ -215,6 +219,7 @@ function ViewMode({
   setSize,
   atm,
   spotBelowStrike,
+  ready,
   legs,
   setLegs,
 }: {
@@ -224,6 +229,7 @@ function ViewMode({
   setSize: (s: string) => void;
   atm: number;
   spotBelowStrike: boolean;
+  ready: boolean;
   legs: BuiltLeg[];
   setLegs: (l: BuiltLeg[]) => void;
 }) {
@@ -281,6 +287,7 @@ function ViewMode({
             sizeEth={sizeEth}
             activeLegs={legs}
             onPick={setLegs}
+            ready={ready}
           />
         </div>
 
@@ -306,6 +313,7 @@ function HedgeMode({
   positions,
   atm,
   spotBelowStrike,
+  ready,
   legs,
   setLegs,
 }: {
@@ -320,6 +328,7 @@ function HedgeMode({
   positions: HlPosition[];
   atm: number;
   spotBelowStrike: boolean;
+  ready: boolean;
   legs: BuiltLeg[];
   setLegs: (l: BuiltLeg[]) => void;
 }) {
@@ -403,6 +412,7 @@ function HedgeMode({
               sizeEth={Math.abs(active.szi)}
               activeLegs={legs}
               onPick={setLegs}
+              ready={ready}
             />
           </div>
 
@@ -485,7 +495,13 @@ function PositionSummary({ p }: { p: HlPosition }) {
   );
 }
 
-/** One list of structures, whatever chose them. */
+/**
+ * One list of structures, whatever chose them.
+ *
+ * `ready` is false until the pool price and the series have loaded. Every leg is placed relative to
+ * the strike nearest spot, and before spot arrives that strike defaults to the bottom of the
+ * ladder — so a card picked in that first second built an in-the-money leg nobody asked for.
+ */
 function PresetList({
   label,
   templates,
@@ -494,6 +510,7 @@ function PresetList({
   sizeEth,
   activeLegs,
   onPick,
+  ready,
 }: {
   label: string;
   templates: StrategyTemplate[];
@@ -502,6 +519,7 @@ function PresetList({
   sizeEth: number;
   activeLegs: BuiltLeg[];
   onPick: (legs: BuiltLeg[]) => void;
+  ready: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -533,14 +551,22 @@ function PresetList({
         return (
           <button
             key={t.id}
+            disabled={!ready}
+            aria-busy={!ready}
             className={cn(
               "w-full rounded-md border-rule border-line px-3.5 py-3 text-left transition-colors",
               isActive ? "border-lime-deep bg-lime-wash shadow-sm" : "bg-card shadow-xs hover:bg-lime-wash",
+              !ready && "cursor-wait hover:bg-card",
             )}
             onClick={() => handlePick(t.id)}
           >
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[13px] font-extrabold">{t.name}</span>
+              <span className="min-w-0">
+                <span className="text-[13px] font-extrabold">{t.name}</span>
+                {t.technical && (
+                  <span className="ml-1.5 text-[11.5px] font-semibold text-ink-faint">{t.technical}</span>
+                )}
+              </span>
               <Badge
                 variant={
                   t.cost === "earns premium" ? "call" : t.cost === "costs premium" ? "put" : "itm"
@@ -556,7 +582,11 @@ function PresetList({
               <span className="font-bold text-ink">Premium:</span> {t.earns}
             </p>
             <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">Needs {t.requires}.</p>
-            <p className="mt-1 font-mono text-[11px] text-ink-faint">{legLine}</p>
+            {ready ? (
+              <p className="mt-1 font-mono text-[11px] text-ink-faint">{legLine}</p>
+            ) : (
+              <Skeleton className="mt-1.5 h-3 w-40" />
+            )}
           </button>
         );
       })}

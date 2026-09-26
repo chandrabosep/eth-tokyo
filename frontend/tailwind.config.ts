@@ -63,12 +63,30 @@ const config: Config = {
         "slide-out-right": { from: { transform: "translateX(0)" }, to: { transform: "translateX(100%)" } },
         "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },
         "fade-out": { from: { opacity: "1" }, to: { opacity: "0" } },
+        // The pointer companion: it pops in on the click, bobs while the chain is thinking,
+        // and throws a ring when the batch lands.
+        "pop-in": {
+          from: { transform: "scale(0.3) rotate(-14deg)", opacity: "0" },
+          "70%": { transform: "scale(1.12) rotate(3deg)", opacity: "1" },
+          to: { transform: "scale(1) rotate(0deg)", opacity: "1" },
+        },
+        bob: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-7px)" },
+        },
+        cheer: {
+          from: { transform: "scale(0.5)", opacity: "0.75" },
+          to: { transform: "scale(2.4)", opacity: "0" },
+        },
       },
       animation: {
         "slide-in-right": "slide-in-right 260ms var(--ease-out)",
         "slide-out-right": "slide-out-right 180ms var(--ease-in)",
         "fade-in": "fade-in 180ms var(--ease-out)",
         "fade-out": "fade-out 140ms var(--ease-in)",
+        "pop-in": "pop-in 380ms var(--ease-out) both",
+        bob: "bob 620ms ease-in-out infinite",
+        cheer: "cheer 760ms var(--ease-out) forwards",
       },
     },
   },

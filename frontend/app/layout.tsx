@@ -3,6 +3,7 @@ import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Nav } from "@/components/Nav";
+import { CursorDance } from "@/components/cursor-dance";
 
 /**
  * Single family, weight-split — the reference's own discipline. Mono is
@@ -38,6 +39,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Nav />
             {children}
           </div>
+          {/* Outside the page column: it is positioned against the viewport, not the layout. */}
+          <CursorDance />
         </Providers>
       </body>
     </html>

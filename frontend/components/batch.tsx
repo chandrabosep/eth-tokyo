@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useDanceWithBatch } from "@/components/cursor-dance";
 import { useAccount, useCapabilities, useConfig } from "wagmi";
 import type { Config } from "@wagmi/core";
 import {
@@ -83,6 +84,9 @@ export function useBatch() {
   const { address, chainId } = useAccount();
   const canBatch = useAtomicBatch();
   const [state, setState] = useState<BatchState>(idle);
+
+  // A trade landing is worth showing at the pointer, not only in the panel.
+  useDanceWithBatch(state.status);
 
   const send = useCallback(
     async (calls: BatchCall[]) => {

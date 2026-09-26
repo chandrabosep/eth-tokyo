@@ -39,7 +39,10 @@ export type MarketView = "bullish" | "bearish" | "range" | "volatile";
 
 export type StrategyTemplate = {
   id: string;
+  /** What a trader would call it. For hedges this is plain language: a floor, not a put. */
   name: string;
+  /** The textbook name, shown beside the plain one so an options trader still recognises it. */
+  technical?: string;
   summary: string;
   effect: string;
   cost: "earns premium" | "costs premium" | "roughly financed";
@@ -75,7 +78,8 @@ const LIVE_NOW = "Every swap through this range, for as long as spot stays insid
 export const PERP_STRATEGIES: StrategyTemplate[] = [
   {
     id: "protective-put",
-    name: "Protective put",
+    name: "Floor",
+    technical: "protective put",
     forSide: "long",
     kind: "hedge",
     summary: "Buy a put below spot against the long perp.",
@@ -88,7 +92,8 @@ export const PERP_STRATEGIES: StrategyTemplate[] = [
   },
   {
     id: "put-spread",
-    name: "Put spread",
+    name: "Budget floor",
+    technical: "put spread",
     forSide: "long",
     kind: "hedge",
     summary: "Buy a put below spot, write one further below to fund it.",
@@ -103,7 +108,8 @@ export const PERP_STRATEGIES: StrategyTemplate[] = [
   },
   {
     id: "collar",
-    name: "Collar",
+    name: "Floor paid by your upside",
+    technical: "collar",
     forSide: "long",
     kind: "hedge",
     summary: "Buy a put below spot and write a call above it.",
@@ -119,7 +125,8 @@ export const PERP_STRATEGIES: StrategyTemplate[] = [
   },
   {
     id: "perp-rent",
-    name: "Rent the live range",
+    name: "Earn while you hold",
+    technical: "write the live range",
     forSide: "long",
     kind: "yield",
     summary: "Write the one range spot is sitting in, alongside the perp.",
@@ -132,7 +139,8 @@ export const PERP_STRATEGIES: StrategyTemplate[] = [
   },
   {
     id: "protective-call",
-    name: "Protective call",
+    name: "Squeeze cover",
+    technical: "protective call",
     forSide: "short",
     kind: "hedge",
     summary: "Buy a call above spot against the short perp.",
@@ -144,7 +152,8 @@ export const PERP_STRATEGIES: StrategyTemplate[] = [
   },
   {
     id: "call-spread",
-    name: "Call spread",
+    name: "Budget squeeze cover",
+    technical: "call spread",
     forSide: "short",
     kind: "hedge",
     summary: "Buy a call above spot, write one further above to fund it.",
@@ -159,7 +168,8 @@ export const PERP_STRATEGIES: StrategyTemplate[] = [
   },
   {
     id: "reverse-collar",
-    name: "Reverse collar",
+    name: "Squeeze cover paid by your downside",
+    technical: "reverse collar",
     forSide: "short",
     kind: "hedge",
     summary: "Buy a call above spot and write a put below it.",
@@ -175,7 +185,8 @@ export const PERP_STRATEGIES: StrategyTemplate[] = [
   },
   {
     id: "perp-rent-short",
-    name: "Rent the live range",
+    name: "Earn while you hold",
+    technical: "write the live range",
     forSide: "short",
     kind: "yield",
     summary: "Write the one range spot is sitting in, alongside the perp.",

@@ -30,9 +30,16 @@ export default function ChainPage() {
             value: spot ? `$${spot.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : undefined,
             grow: 1.12,
           },
-          { label: "Pool tick", mono: true, value: tick !== undefined ? String(tick) : undefined, grow: 0.96 },
           { label: "Realised vol", tone: "lime", value: `${(pricing.realisedVolBps / 100).toFixed(1)}%`, grow: 0.96 },
-          { label: "Utilisation", tone: "peri", value: `${utilisation.toFixed(0)}%`, grow: 0.96 },
+          // The raw pool tick used to sit here. It means nothing to a trader; the fee it prices
+          // into is the number they are actually paying or earning, and matches Strategies.
+          {
+            label: "Premium now",
+            tone: "peri",
+            value: pricing.currentFee ? `${(pricing.currentFee / 10_000).toFixed(2)}%` : undefined,
+            grow: 0.96,
+          },
+          { label: "Utilisation", value: `${utilisation.toFixed(0)}%`, grow: 0.96 },
         ]}
       />
 
