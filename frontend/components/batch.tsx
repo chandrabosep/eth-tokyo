@@ -395,15 +395,43 @@ async function settleNonce(
  *
  * A wallet that will not serve `eth_getCode` simply does not answer, and the trade goes ahead —
  * this is here to catch a specific misconfiguration, not to gate trading on an optional RPC method.
+ *
+ * Which means the bar for accusing a wallet has to be POSITIVE evidence: two real deployments that
+ * disagree. An empty answer is not evidence, and treating it as such is what made this fire on a
+ * correctly configured wallet. Two ways to get "0x" back with nothing wrong at all:
+ *
+ *   - The connector has not finished moving. `switchChain` resolving does not mean the client is
+ *     on the new chain yet, and `useAccount().chainId` is React state that can lag a switch the
+ *     user made in the wallet itself — so the check can be skipped as unnecessary, then run
+ *     against the previous network. The manager's address holds no code on Base, or mainnet, or
+ *     anywhere else, so it answers "0x" and looks exactly like a wrong node.
+ *   - The session does not proxy reads. A WalletConnect wallet is under no obligation to serve
+ *     `eth_getCode` for a chain it does not know, and some answer "0x" rather than erroring.
+ *
+ * The real misconfiguration — a wallet pointed at a different anvil — does not look like either.
+ * Both forks deploy the manager to the same address, so that wallet returns a full, *different*
+ * runtime, which is what this compares. (Same address, different bytecode, because the hook is an
+ * immutable and is therefore baked into the manager's code.)
  */
 async function wrongNode(config: Config): Promise<Error | undefined> {
   try {
-    const client = await getConnectorClient(config);
+    // Naming the chain makes wagmi refuse to hand back a client for a different one, rather than
+    // quietly answering from wherever the connector currently is.
+    const client = await getConnectorClient(config, { chainId: baseFork.id });
+
+    // And asked again over the same connection, because the connector's idea of its chain is the
+    // thing in question. If it is not on the fork, this check has nothing to say — the chain id
+    // named on every call below is what catches that, with an error about the network.
+    const walletChain = await client.request({ method: "eth_chainId" });
+    if (Number(walletChain) !== baseFork.id) return undefined;
+
     const [wallet, app] = await Promise.all([
       client.request({ method: "eth_getCode", params: [deployed.optionsManager, "latest"] }),
       getBytecode(config, { address: deployed.optionsManager, chainId: baseFork.id }),
     ]);
-    if ((wallet ?? "0x") === (app ?? "0x")) return undefined;
+    const missing = (code: string | undefined | null) => !code || code === "0x";
+    if (missing(wallet) || missing(app)) return undefined;
+    if (wallet === app) return undefined;
     return Object.assign(new Error(
       `Your wallet is signing against a different node. It reports chain ${baseFork.id}, but the ` +
         `contracts there are not the ones this app is reading — anything you sign will land where ` +
