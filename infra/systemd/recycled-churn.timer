@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep the demo fork's price live and its writers paid
+
+[Timer]
+# Every 90 seconds. Two reasons for that number rather than something slower: the price should
+# not be visibly stale while someone is looking at it, and the hook reads realised volatility
+# from the time between observations, so the gaps have to look like a market's, not a cron's.
+OnBootSec=2min
+OnUnitActiveSec=90s
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

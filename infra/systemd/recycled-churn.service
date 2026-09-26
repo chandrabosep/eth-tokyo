@@ -1,0 +1,14 @@
+[Unit]
+Description=Walk the demo fork toward the real ETH price and trade through the book
+After=recycled-anvil.service
+Wants=recycled-anvil.service
+
+[Service]
+Type=oneshot
+User=recycled
+WorkingDirectory=/opt/recycled
+EnvironmentFile=/etc/recycled/env
+ExecStart=/opt/recycled/demo/churn.sh
+# A fork with no flow is the failure this exists to prevent, so a bad round is not worth a
+# failed unit: the script already swallows what it can and the next tick tries again.
+SuccessExitStatus=0 1

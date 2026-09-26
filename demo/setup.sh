@@ -28,6 +28,11 @@ ACCOUNTS=(
   0x637a2F455b2D47ecE29E2Ec5FECb278a8c195949   # deployer / swapper
   0x260529A5889B22dB02E0e8c1F90A7415084dF54E   # seller
   0x3F8bC758CBCc3bB199FC7799f96D24aeEf242999   # buyer
+  # Traders for demo/churn.sh — the flow that keeps the price live and pays the writers. Three of
+  # them so the tape is not one address talking to itself.
+  0x69c8fC0Ee5bdEa6302D7e2E9bdBCd0443a1c22fb   # trader 1
+  0xD5F5E5B305A111296f3143cC41A4a36DC2cA989E   # trader 2
+  0xF6c7a8ecE1064870159EF8DFF570B061e7C78cc1   # trader 3
 )
 
 if ! cast block-number --rpc-url "$RPC" >/dev/null 2>&1; then

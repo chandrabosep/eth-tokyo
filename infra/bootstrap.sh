@@ -100,6 +100,10 @@ systemctl daemon-reload
 systemctl enable --now recycled-anvil.service
 systemctl enable --now recycled-gateway.service
 systemctl enable --now recycled-reset.timer
+systemctl enable --now recycled-churn.timer
+# The watchdog that redeploys after an OOM kill or a reboot. Installed since it was written but
+# never enabled, so until now it only ran when someone started it by hand.
+systemctl enable --now recycled-ensure.timer
 
 if [[ -z "$HOST" ]]; then
   echo "==> caddy SKIPPED (no hostname given)"

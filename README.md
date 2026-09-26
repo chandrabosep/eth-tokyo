@@ -313,7 +313,7 @@ Requires Foundry and Node 18+.
 forge install && forge test
 ```
 
-Three terminals for the demo:
+Four terminals for the demo:
 
 ```bash
 ./demo/anvil.sh
@@ -327,8 +327,25 @@ Three terminals for the demo:
 cd frontend && npm install && npm run dev
 ```
 
+```bash
+./demo/churn.sh --loop
+```
+
 `setup.sh` funds demo accounts from a whale on the fork, deploys the hook and manager, initialises
-the pool, and seeds a live position set. Then open <http://127.0.0.1:3000>.
+the pool, and seeds a live position set: the whole ladder written from one Aqua offer, and long
+interest across every strike. Then open <http://127.0.0.1:3000>.
+
+`churn.sh` is what keeps it alive, and it is worth running during a demo. A fork is frozen at the
+block it was made from, so its ETH price never moves and — more to the point — nothing swaps.
+Premium here IS the pool's swap fee, accruing only while spot sits inside a written range, so an
+untouched book pays its writers nothing no matter how much is written. Each round reads the real
+ETH mid from Hyperliquid, walks the pool toward it a few ticks at a time, and round-trips a small
+size so the in-range writers are paid even on a flat tape. It trades from three throwaway accounts
+so the tape is not one address talking to itself.
+
+The walk is deliberately capped per round. The hook reads realised volatility from the gap between
+ticks and the time between observations, so closing a large gap in one swap prints a vertical move
+and pegs the volatility fee at its ceiling — a true reading of a fake price path.
 
 It rewrites `deployments/base-fork.json`, which the frontend imports for addresses. A copy is
 committed so the frontend builds before you have run anything; the addresses in it are only valid
@@ -437,6 +454,6 @@ test/
   OptionsManager.t.sol      mechanism + Aqua path against a local PoolManager
   AquaFork.t.sol            against real Base mainnet contracts
 script/                     deploy + seed
-demo/                       anvil fork and one-shot setup
+demo/                       anvil fork, one-shot setup, and the churn loop
 frontend/                   Next.js: Trade, Positions, Hedge
 ```

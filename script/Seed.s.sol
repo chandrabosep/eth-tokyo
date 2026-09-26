@@ -127,21 +127,26 @@ contract Seed is Script {
         vm.stopBroadcast();
         console2.log("wrote the full ladder, series:", ladder.length);
 
-        // ---- 3. Buyer takes a two-leg spread, batched. ----
-        OptionsManager.Leg[] memory bought = new OptionsManager.Leg[](2);
-        bought[0] = OptionsManager.Leg({strikeIndex: idx, isPut: true, liquidity: LADDER_LIQUIDITY / 4});
-        bought[1] = OptionsManager.Leg({
-            strikeIndex: idx == 0 ? 1 : idx - 1,
-            isPut: true,
-            liquidity: LADDER_LIQUIDITY / 8
-        });
+        // ---- 3. Buyer takes open interest across the whole ladder. ----
+        //
+        // Not one spread, for the same reason the write covers everything: a chain with a single
+        // bought series looks like a test fixture, and the utilisation spread — half of what the
+        // fee bar on the chain page is explaining — only has something to say once longs actually
+        // hold a share of the book.
+        //
+        // Sizes are small and uneven on purpose. Uniform buys across eighteen series read as
+        // generated; a book that is heavier near the money and thinner in the wings reads as a
+        // market. Every leg stays well under what was written, since a long can only take what
+        // someone else already wrote.
+        OptionsManager.Leg[] memory bought = _demand(options, idx);
 
         vm.startBroadcast(buyerPk);
         IERC20Like(usdc).approve(address(options), type(uint256).max);
         IERC20Like(weth).approve(address(options), type(uint256).max);
         options.buyStrategy(bought);
         vm.stopBroadcast();
-        console2.log("bought a two-leg put spread for buyer", buyer);
+        console2.log("bought across the ladder for buyer", buyer);
+        console2.log("bought series:", bought.length);
 
         // ---- 4. Churn the pool so premium is already visibly accruing. ----
         //
@@ -183,6 +188,37 @@ contract Seed is Script {
         console2.log("seeded: premium is now accruing from real swap fees");
 
         vm.writeJson(vm.toString(address(router)), "./deployments/base-fork.json", ".swapRouter");
+    }
+
+    /// @dev Open interest on the long side, shaped like demand: heaviest at the money, thinning
+    ///      out towards the wings, and never more than a fraction of what was written there.
+    function _demand(OptionsManager options, uint8 atm)
+        internal
+        view
+        returns (OptionsManager.Leg[] memory legs)
+    {
+        uint256 n = options.strikeCount();
+        legs = new OptionsManager.Leg[](n * 2);
+        for (uint256 i = 0; i < n; i++) {
+            uint256 distance = i > atm ? i - atm : atm - i;
+            // 1/8th of the written series at the money, halving with every strike out, floored so
+            // the far wings still show a bid rather than an empty cell.
+            uint128 size = uint128(LADDER_LIQUIDITY / (8 * (1 << (distance > 3 ? 3 : distance))));
+            uint128 floor_ = LADDER_LIQUIDITY / 64;
+            if (size < floor_) size = floor_;
+            // Puts carry a little more than calls below the money and the reverse above it, which
+            // is what a book that has been hedging a spot position actually looks like.
+            legs[i * 2] = OptionsManager.Leg({
+                strikeIndex: uint8(i),
+                isPut: true,
+                liquidity: i <= atm ? size : size / 2
+            });
+            legs[i * 2 + 1] = OptionsManager.Leg({
+                strikeIndex: uint8(i),
+                isPut: false,
+                liquidity: i >= atm ? size : size / 2
+            });
+        }
     }
 
     /// @dev Every series on the ladder — both sides of every strike — as one structure.
