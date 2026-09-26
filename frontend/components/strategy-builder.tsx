@@ -325,10 +325,10 @@ function AddLeg({ onAdd, defaultSize }: { onAdd: (l: BuiltLeg) => void; defaultS
   return (
     <div className="rounded-md border-rule border-line bg-paper-2 p-3.5">
       <Label className="mb-2 block">Add a leg</Label>
-      <div className="flex flex-wrap items-end gap-2">
+      <div className="flex flex-wrap items-end gap-1.5">
         <select
           aria-label="Strike"
-          className="h-10 rounded-md border-rule border-line bg-card px-2.5 text-[13px] font-bold shadow-xs tnum"
+          className="h-10 rounded-md border-rule border-line bg-card px-2 text-[13px] font-bold shadow-xs tnum"
           value={strikeIndex}
           onChange={(e) => setStrikeIndex(Number(e.target.value))}
         >
@@ -340,7 +340,7 @@ function AddLeg({ onAdd, defaultSize }: { onAdd: (l: BuiltLeg) => void; defaultS
         </select>
         <select
           aria-label="Put or call"
-          className="h-10 rounded-md border-rule border-line bg-card px-2.5 text-[13px] font-bold shadow-xs"
+          className="h-10 rounded-md border-rule border-line bg-card px-2 text-[13px] font-bold shadow-xs"
           value={isPut ? "put" : "call"}
           onChange={(e) => setIsPut(e.target.value === "put")}
         >
@@ -349,7 +349,7 @@ function AddLeg({ onAdd, defaultSize }: { onAdd: (l: BuiltLeg) => void; defaultS
         </select>
         <select
           aria-label="Write or buy"
-          className="h-10 rounded-md border-rule border-line bg-card px-2.5 text-[13px] font-bold shadow-xs"
+          className="h-10 rounded-md border-rule border-line bg-card px-2 text-[13px] font-bold shadow-xs"
           value={side}
           onChange={(e) => setSide(e.target.value as "sell" | "buy")}
         >
@@ -358,7 +358,7 @@ function AddLeg({ onAdd, defaultSize }: { onAdd: (l: BuiltLeg) => void; defaultS
         </select>
         <Input
           aria-label="Size in ETH"
-          className="h-10 w-[104px]"
+          className="h-10 w-[96px]"
           inputMode="decimal"
           value={size}
           onChange={(e) => setSize(e.target.value)}

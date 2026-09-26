@@ -161,7 +161,7 @@ function Strategies() {
       )}
 
       {actionable.length > 0 && (
-        <section className="mt-5 grid items-start gap-4 lg:grid-cols-[260px_1fr]">
+        <section className="mt-5 grid items-start gap-4 lg:grid-cols-[2fr_3fr]">
           {/* Sticky left sidebar — stays visible while the builder scrolls */}
           <div className="flex flex-col gap-3 lg:sticky lg:top-6">
             {active && <PositionSummary p={active} />}
@@ -238,7 +238,7 @@ function PositionSummary({ p }: { p: HlPosition }) {
           {fmt(p.szi, 4)} {p.coin}
         </CardTitle>
       </CardHeader>
-      <div className="grid grid-cols-2 gap-x-4 border-y-rule border-line bg-paper-2 px-4 py-2.5">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y-rule border-line bg-paper-2 px-4 py-3 sm:grid-cols-4">
         <Fact label="Entry" value={`$${fmt(p.entryPx, 2)}`} />
         <Fact label="Notional" value={`$${fmt(p.positionValue, 2)}`} />
         <Fact
@@ -301,16 +301,17 @@ function PresetSidebar({
           .join(" · ");
 
         return (
-          <div key={t.id} className="group relative">
-            <button
-              className={cn(
-                "flex w-full items-center justify-between gap-2 rounded-md border-rule border-line px-3 py-2.5 text-left transition-colors",
-                isActive
-                  ? "border-lime-deep bg-lime-wash shadow-sm"
-                  : "bg-card shadow-xs hover:bg-lime-wash",
-              )}
-              onClick={() => handlePick(t.id)}
-            >
+          <button
+            key={t.id}
+            className={cn(
+              "w-full rounded-md border-rule border-line px-3.5 py-3 text-left transition-colors",
+              isActive
+                ? "border-lime-deep bg-lime-wash shadow-sm"
+                : "bg-card shadow-xs hover:bg-lime-wash",
+            )}
+            onClick={() => handlePick(t.id)}
+          >
+            <div className="flex items-center justify-between gap-3">
               <span className="text-[13px] font-extrabold">{t.name}</span>
               <Badge
                 variant={
@@ -323,24 +324,10 @@ function PresetSidebar({
               >
                 {t.cost}
               </Badge>
-            </button>
-
-            {/* Hover tooltip — floats to the right of the sidebar */}
-            <div
-              className={cn(
-                "pointer-events-none absolute left-full top-0 z-50 ml-3 w-60 rounded-md border-rule border-line bg-card p-3.5 shadow-lg",
-                "opacity-0 invisible transition-all duration-150",
-                "group-hover:visible group-hover:opacity-100",
-              )}
-            >
-              <p className="text-[12.5px] leading-relaxed text-ink">
-                {t.effect}
-              </p>
-              <p className="mt-2 font-mono text-[11px] text-ink-soft">
-                {legLine}
-              </p>
             </div>
-          </div>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-soft">{t.effect}</p>
+            <p className="mt-1 font-mono text-[11px] text-ink-faint">{legLine}</p>
+          </button>
         );
       })}
     </div>
