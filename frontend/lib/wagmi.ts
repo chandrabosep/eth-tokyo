@@ -4,7 +4,20 @@ import { http } from "@wagmi/core";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
 import { defineChain } from "@reown/appkit/networks";
 
-const RPC = process.env.NEXT_PUBLIC_RPC_URL ?? "http://127.0.0.1:8545";
+/** The node this build reads, and the one a wallet has to be pointed at to agree with it. */
+export const FORK_RPC = process.env.NEXT_PUBLIC_RPC_URL ?? "http://127.0.0.1:8545";
+const RPC = FORK_RPC;
+
+/**
+ * What the wallet will call this network once it is added.
+ *
+ * Worth deriving rather than hardcoding: a hosted build that tells the user to add a network
+ * called "Base fork (local)" is describing the wrong machine, and the name is the only thing
+ * distinguishing it from the other chain-31337 entry they may already have.
+ */
+export const FORK_NAME = /127\.0\.0\.1|localhost/.test(FORK_RPC)
+  ? "Base fork (local)"
+  : "Mamori Base fork";
 
 /**
  * The local anvil fork of Base.
@@ -35,7 +48,7 @@ export const baseFork = defineChain({
   id: CHAIN_ID,
   caipNetworkId: `eip155:${CHAIN_ID}`,
   chainNamespace: "eip155",
-  name: "Base fork (local)",
+  name: FORK_NAME,
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: [RPC] } },
   // Base's canonical Multicall3, which the fork inherits along with the rest of mainnet state.

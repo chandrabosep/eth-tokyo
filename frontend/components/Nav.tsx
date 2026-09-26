@@ -3,13 +3,15 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
+import { useState } from "react";
+import { useAccount, useConfig, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { useAppKit, useAppKitNetwork } from "@reown/appkit/react";
 import { AlertTriangle, LogOut, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { baseFork, reownProjectId } from "@/lib/wagmi";
+import { addForkNetwork, useNetworkStatus } from "@/lib/network";
+import { baseFork, FORK_RPC, reownProjectId } from "@/lib/wagmi";
 
 const TABS = [
   { href: "/", label: "Chain" },
@@ -35,9 +37,6 @@ const SwitchNetworkButton = reownProjectId ? AppKitSwitch : WagmiSwitch;
  */
 export function Nav() {
   const path = usePathname();
-  const { isConnected, chainId } = useAccount();
-
-  const wrongNetwork = isConnected && chainId !== baseFork.id;
 
   return (
     <>
@@ -80,19 +79,84 @@ export function Nav() {
         </nav>
       </header>
 
-      {/* A mismatched wallet estimates gas itself and silently under-funds the
-          transaction, so this blocks loudly rather than letting it fail. */}
-      {wrongNetwork && (
-        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border-rule border-line bg-flag px-4 py-3 text-sm shadow-sm">
-          <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-          <span className="flex-1 font-medium">
-            <strong className="font-extrabold">Wrong network.</strong> This runs on the Base fork, chain{" "}
-            <span className="font-mono">{baseFork.id}</span>.
-          </span>
-          <SwitchNetworkButton />
-        </div>
-      )}
+      <NetworkBanner />
     </>
+  );
+}
+
+/**
+ * Two different wrong networks, and they need different fixes.
+ *
+ * A wallet on the wrong CHAIN is the easy one: switch, adding the network first if the wallet does
+ * not have it. A wallet on the right chain id but a different FORK cannot be switched at all —
+ * every anvil fork of Base answers to 31337, so the wallet already believes it is where it should
+ * be. The only lever is handing it this fork's RPC URL, which is what `wallet_addEthereumChain`
+ * does; and because older wallets refuse to add an id they already hold, the URL is on screen to
+ * be added by hand.
+ *
+ * Both are checked on connect rather than at the trade, so nobody picks a strike and a size before
+ * finding out their wallet was never going to be able to sign it.
+ */
+function NetworkBanner() {
+  const config = useConfig();
+  const { wrongChain, wrongNode, recheck } = useNetworkStatus();
+  const [adding, setAdding] = useState(false);
+
+  if (!wrongChain && !wrongNode) return null;
+
+  const add = async () => {
+    setAdding(true);
+    try {
+      await addForkNetwork(config);
+    } catch {
+      // Refused, or a wallet that will not add an id it already has. The URL below is the fallback.
+    } finally {
+      setAdding(false);
+      recheck();
+    }
+  };
+
+  return (
+    <div className="mt-5 rounded-lg border-rule border-line bg-flag px-4 py-3 text-sm shadow-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+        <span className="flex-1 font-medium">
+          {wrongChain ? (
+            <>
+              <strong className="font-extrabold">Wrong network.</strong> This runs on the Base fork, chain{" "}
+              <span className="font-mono">{baseFork.id}</span>.
+            </>
+          ) : (
+            <>
+              <strong className="font-extrabold">Wrong fork.</strong> Your wallet is on chain{" "}
+              <span className="font-mono">{baseFork.id}</span>, but a different one — the contracts there
+              are not the ones this app reads, so anything you sign would land where it cannot be seen.
+            </>
+          )}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" disabled={adding} onClick={add}>
+            {adding ? "Adding…" : "Add network"}
+          </Button>
+          {wrongChain && <SwitchNetworkButton />}
+        </div>
+      </div>
+
+      {/* Named in full for the wallet that will not take it programmatically. */}
+      <p className="mt-2 border-t border-ink/15 pt-2 text-[12px] leading-relaxed">
+        Or add it by hand — RPC <span className="font-mono font-bold">{FORK_RPC}</span>, chain id{" "}
+        <span className="font-mono font-bold">{baseFork.id}</span>, currency{" "}
+        <span className="font-mono font-bold">ETH</span>.
+        {wrongNode && (
+          <>
+            {" "}
+            A wallet holding one network per chain id already has an entry for{" "}
+            <span className="font-mono">{baseFork.id}</span>, so adding this may attach the URL to that
+            entry instead — in MetaMask, check <em>Settings → Networks</em> and make it the selected RPC.
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 
