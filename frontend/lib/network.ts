@@ -6,7 +6,7 @@ import { getBytecode, getConnectorClient, switchChain } from "@wagmi/core";
 import type { Config } from "@wagmi/core";
 
 import { deployed } from "./config";
-import { baseFork, FORK_NAME, FORK_RPC } from "./wagmi";
+import { activeChain, FORK_NAME, FORK_RPC } from "./wagmi";
 
 /**
  * Is the wallet pointed at the same node this app reads?
@@ -35,16 +35,16 @@ export async function compareNode(config: Config): Promise<NodeVerdict> {
   try {
     // Naming the chain makes wagmi refuse to hand back a client for a different one, rather than
     // quietly answering from wherever the connector currently is.
-    const client = await getConnectorClient(config, { chainId: baseFork.id });
+    const client = await getConnectorClient(config, { chainId: activeChain.id });
 
     // Asked again over the same connection, because the connector's idea of its own chain is the
     // thing in question.
     const walletChain = await client.request({ method: "eth_chainId" });
-    if (Number(walletChain) !== baseFork.id) return "unknown";
+    if (Number(walletChain) !== activeChain.id) return "unknown";
 
     const [wallet, app] = await Promise.all([
       client.request({ method: "eth_getCode", params: [deployed.optionsManager, "latest"] }),
-      getBytecode(config, { address: deployed.optionsManager, chainId: baseFork.id }),
+      getBytecode(config, { address: deployed.optionsManager, chainId: activeChain.id }),
     ]);
     if (missing(wallet) || missing(app)) return "unknown";
     return wallet === app ? "ok" : "other-node";
@@ -69,7 +69,7 @@ export async function addForkNetwork(config: Config): Promise<void> {
     method: "wallet_addEthereumChain",
     params: [
       {
-        chainId: `0x${baseFork.id.toString(16)}`,
+        chainId: `0x${activeChain.id.toString(16)}`,
         chainName: FORK_NAME,
         nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
         rpcUrls: [FORK_RPC],
@@ -79,7 +79,7 @@ export async function addForkNetwork(config: Config): Promise<void> {
   } as unknown as Parameters<typeof client.request>[0]);
 
   // Adding does not always select it, and on the wallets that do this is a no-op.
-  await switchChain(config, { chainId: baseFork.id }).catch(() => undefined);
+  await switchChain(config, { chainId: activeChain.id }).catch(() => undefined);
 }
 
 export type NetworkStatus = {
@@ -106,7 +106,7 @@ export function useNetworkStatus(): NetworkStatus {
   const [checking, setChecking] = useState(false);
   const [nonce, setNonce] = useState(0);
 
-  const wrongChain = isConnected && chainId !== undefined && chainId !== baseFork.id;
+  const wrongChain = isConnected && chainId !== undefined && chainId !== activeChain.id;
 
   useEffect(() => {
     // Only meaningful once the wallet says it is on the fork; otherwise the chain id is the

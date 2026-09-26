@@ -16,7 +16,7 @@ import type { Abi, Address, Client } from "viem";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { baseFork, FORK_RPC } from "@/lib/wagmi";
+import { activeChain, FORK_RPC } from "@/lib/wagmi";
 import { compareNode } from "@/lib/network";
 import { revertMessage } from "@/components/tx";
 
@@ -95,15 +95,15 @@ export function useBatch() {
 
       // A wallet on the wrong network would otherwise send the first call somewhere else entirely.
       // Switching is part of the one click rather than a separate errand for the user.
-      if (chainId !== baseFork.id) {
+      if (chainId !== activeChain.id) {
         try {
-          await switchChain(config, { chainId: baseFork.id });
+          await switchChain(config, { chainId: activeChain.id });
         } catch (error) {
           setState({
             ...base,
             status: "failure",
             done: 0,
-            current: `Switching to chain ${baseFork.id}`,
+            current: `Switching to chain ${activeChain.id}`,
             error,
           });
           return;
@@ -120,7 +120,7 @@ export function useBatch() {
         try {
           const { id } = await sendCalls(config, {
             account: address,
-            chainId: baseFork.id,
+            chainId: activeChain.id,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             calls: calls.map(({ label: _label, ...call }) => call) as any,
           });
@@ -155,7 +155,7 @@ export function useBatch() {
         try {
           hash = await writeContract(config, {
             account: address,
-            chainId: baseFork.id,
+            chainId: activeChain.id,
             address: call.to,
             abi: call.abi,
             functionName: call.functionName,
@@ -165,7 +165,7 @@ export function useBatch() {
           setState({ ...step, phase: "mine", hash });
           const receipt = await waitForTransactionReceipt(config, {
             hash,
-            chainId: baseFork.id,
+            chainId: activeChain.id,
             timeout: RECEIPT_TIMEOUT,
           });
           if (receipt.status === "reverted") {
@@ -286,7 +286,7 @@ export function BatchNote({ batch, label }: { batch: ReturnType<typeof useBatch>
         ) : timedOut(error) ? (
           <>
             {current ?? label} was signed but never confirmed on chain{" "}
-            <span className="font-mono">{baseFork.id}</span>. Check your wallet is on this network — a
+            <span className="font-mono">{activeChain.id}</span>. Check your wallet is on this network — a
             transaction sent to another one will never show up here.
             {hash && <span className="block font-mono text-[11.5px]">{hash}</span>}
           </>
@@ -398,7 +398,7 @@ async function wrongNode(config: Config): Promise<Error | undefined> {
   if ((await compareNode(config)) !== "other-node") return undefined;
   return Object.assign(
     new Error(
-      `Your wallet is signing against a different node. It reports chain ${baseFork.id}, but the ` +
+      `Your wallet is signing against a different node. It reports chain ${activeChain.id}, but the ` +
         `contracts there are not the ones this app is reading — anything you sign will land where ` +
         `this app cannot see it. Point your wallet's network at ${FORK_RPC}.`,
     ),

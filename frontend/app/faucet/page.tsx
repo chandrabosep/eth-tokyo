@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { CardNote, PageHeader } from "@/components/page-header";
 
 import { erc20Abi } from "@/lib/abi";
-import { deployed, USDC_DECIMALS, WETH_DECIMALS } from "@/lib/config";
+import { activeNetwork, deployed, USDC_DECIMALS, WETH_DECIMALS } from "@/lib/config";
 import { fmt, fromRaw } from "@/lib/options";
 
 /**
@@ -23,7 +23,9 @@ import { fmt, fromRaw } from "@/lib/options";
  * This becomes part of the network registry once the network toggle lands — a faucet belongs to
  * a network, not to the build.
  */
-const FAUCET_URL = process.env.NEXT_PUBLIC_FAUCET_URL;
+// Build-time env, so it is set on the hosted build whichever network is selected at runtime.
+// Nobody is handing out real ETH, so mainnet has no faucet regardless of what is configured.
+const FAUCET_URL = activeNetwork.live ? undefined : process.env.NEXT_PUBLIC_FAUCET_URL;
 
 type FaucetResult = {
   address: string;

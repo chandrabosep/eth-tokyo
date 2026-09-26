@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createAppKit } from "@reown/appkit/react";
 import { useState, type ReactNode } from "react";
 
-import { baseFork, reownProjectId, wagmiAdapter, wagmiConfig } from "../lib/wagmi";
+import { activeChain, reownProjectId, wagmiAdapter, wagmiConfig } from "../lib/wagmi";
+import { activeNetwork } from "../lib/config";
 
 /**
  * Reown AppKit — the connect modal, the wallet list and the network switcher.
@@ -23,8 +24,8 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? (typeof window === "undefined"
 if (reownProjectId) {
   createAppKit({
     adapters: [wagmiAdapter],
-    networks: [baseFork],
-    defaultNetwork: baseFork,
+    networks: [activeChain],
+    defaultNetwork: activeChain,
     projectId: reownProjectId,
     metadata: {
       name: "Mamori",
@@ -71,8 +72,17 @@ if (reownProjectId) {
  * both sides costs one frame and cannot diverge.
  */
 export function Providers({ children }: { children: ReactNode }) {
+  // How hard to poll, which is a property of the node rather than of the app.
+  //
+  // The fork is ours and churns every couple of minutes, so four seconds is free and keeps premium
+  // visibly ticking. Base mainnet is reached through a shared public endpoint that answers 429 long
+  // before it answers slowly — at four seconds the option chain spent more requests being refused
+  // than served. Set NEXT_PUBLIC_BASE_RPC_URL to a dedicated endpoint and this can come back down.
   const [queryClient] = useState(
-    () => new QueryClient({ defaultOptions: { queries: { refetchInterval: 4000, retry: 1 } } }),
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { refetchInterval: activeNetwork.live ? 15_000 : 4_000, retry: 1 } },
+      }),
   );
 
   return (

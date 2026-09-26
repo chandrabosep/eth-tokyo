@@ -93,7 +93,10 @@ function Positions() {
     spot === undefined ? 0 : fromRaw(p.premium[0], WETH_DECIMALS) * spot + fromRaw(p.premium[1], USDC_DECIMALS);
   const earned = positions.filter((p) => !p.isLong).reduce((a, p) => a + premiumUsd(p), 0);
   const paid = positions.filter((p) => p.isLong).reduce((a, p) => a + premiumUsd(p), 0);
-  const priced = spot !== undefined && data !== undefined;
+  // With no wallet there is nothing to total, and nothing to wait for either — the reads are
+  // disabled, so `data` never arrives and the tiles would sit on their loading skeletons forever.
+  // Zero is both true and the answer the page already gives for open legs.
+  const priced = spot !== undefined && (data !== undefined || !address);
 
   return (
     <>

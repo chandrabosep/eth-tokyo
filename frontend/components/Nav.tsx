@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAccount, useConfig, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { useAppKit, useAppKitNetwork } from "@reown/appkit/react";
 import { AlertTriangle, LogOut, Wallet } from "lucide-react";
@@ -11,7 +11,9 @@ import { AlertTriangle, LogOut, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { addForkNetwork, useNetworkStatus } from "@/lib/network";
-import { baseFork, FORK_RPC, reownProjectId } from "@/lib/wagmi";
+import { MainnetNotice, NetworkSelect } from "@/components/network-select";
+import { activeNetwork } from "@/lib/config";
+import { activeChain, FORK_RPC, reownProjectId } from "@/lib/wagmi";
 
 const TABS = [
   { href: "/", label: "Chain" },
@@ -38,6 +40,14 @@ const SwitchNetworkButton = reownProjectId ? AppKitSwitch : WagmiSwitch;
 export function Nav() {
   const path = usePathname();
 
+  // The network is a client-side choice, so the server always renders the testnet tab set. Hiding
+  // the faucet during the first client render instead of after it would mean React finds four
+  // links where the HTML has five, which throws out the whole tree — the hydration error this
+  // originally shipped with. Nobody is handing out real ETH, so on mainnet it goes, one frame late.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const tabs = mounted && activeNetwork.live ? TABS.filter((t) => t.href !== "/faucet") : TABS;
+
   return (
     <>
       <header className="pt-7">
@@ -56,11 +66,14 @@ export function Nav() {
             />
           </h1>
 
-          <WalletCluster />
+          <div className="flex items-center gap-2">
+            <NetworkSelect />
+            <WalletCluster />
+          </div>
         </div>
 
         <nav className="mt-4 flex gap-7 border-b-heavy border-line">
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const active = path === t.href;
             return (
               <Link
@@ -79,6 +92,7 @@ export function Nav() {
         </nav>
       </header>
 
+      <MainnetNotice />
       <NetworkBanner />
     </>
   );
@@ -124,38 +138,45 @@ function NetworkBanner() {
           {wrongChain ? (
             <>
               <strong className="font-extrabold">Wrong network.</strong> This runs on the Base fork, chain{" "}
-              <span className="font-mono">{baseFork.id}</span>.
+              <span className="font-mono">{activeChain.id}</span>.
             </>
           ) : (
             <>
               <strong className="font-extrabold">Wrong fork.</strong> Your wallet is on chain{" "}
-              <span className="font-mono">{baseFork.id}</span>, but a different one — the contracts there
+              <span className="font-mono">{activeChain.id}</span>, but a different one — the contracts there
               are not the ones this app reads, so anything you sign would land where it cannot be seen.
             </>
           )}
         </span>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" disabled={adding} onClick={add}>
-            {adding ? "Adding…" : "Add network"}
-          </Button>
+          {/* Only the fork needs adding. Every wallet already ships Base, so offering to "add"
+              it — with our own RPC, no less — would be replacing something that works. */}
+          {!activeNetwork.live && (
+            <Button size="sm" variant="outline" disabled={adding} onClick={add}>
+              {adding ? "Adding…" : "Add network"}
+            </Button>
+          )}
           {wrongChain && <SwitchNetworkButton />}
         </div>
       </div>
 
-      {/* Named in full for the wallet that will not take it programmatically. */}
+      {/* Named in full for the wallet that will not take it programmatically. Mainnet needs none
+          of this: the network is already in every wallet, so the only thing to do is switch. */}
+      {!activeNetwork.live && (
       <p className="mt-2 border-t border-ink/15 pt-2 text-[12px] leading-relaxed">
         Or add it by hand — RPC <span className="font-mono font-bold">{FORK_RPC}</span>, chain id{" "}
-        <span className="font-mono font-bold">{baseFork.id}</span>, currency{" "}
+        <span className="font-mono font-bold">{activeChain.id}</span>, currency{" "}
         <span className="font-mono font-bold">ETH</span>.
         {wrongNode && (
           <>
             {" "}
             A wallet holding one network per chain id already has an entry for{" "}
-            <span className="font-mono">{baseFork.id}</span>, so adding this may attach the URL to that
+            <span className="font-mono">{activeChain.id}</span>, so adding this may attach the URL to that
             entry instead — in MetaMask, check <em>Settings → Networks</em> and make it the selected RPC.
           </>
         )}
       </p>
+      )}
     </div>
   );
 }
@@ -242,7 +263,7 @@ function DisconnectButton() {
 function AppKitSwitch() {
   const { switchNetwork } = useAppKitNetwork();
   return (
-    <Button size="sm" onClick={() => switchNetwork(baseFork)}>
+    <Button size="sm" onClick={() => switchNetwork(activeChain)}>
       Switch
     </Button>
   );
@@ -251,7 +272,7 @@ function AppKitSwitch() {
 function WagmiSwitch() {
   const { switchChain, isPending } = useSwitchChain();
   return (
-    <Button size="sm" disabled={isPending} onClick={() => switchChain({ chainId: baseFork.id })}>
+    <Button size="sm" disabled={isPending} onClick={() => switchChain({ chainId: activeChain.id })}>
       {isPending ? "Switching…" : "Switch"}
     </Button>
   );

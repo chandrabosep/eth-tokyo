@@ -2,7 +2,7 @@
 
 import { useReadContract, useReadContracts } from "wagmi";
 import { optionsHookAbi, optionsManagerAbi, stateViewAbi } from "./abi";
-import { deployed, poolId, STATE_VIEW } from "./config";
+import { activeNetwork, deployed, poolId, STATE_VIEW } from "./config";
 import { SERIES } from "./options";
 
 /** Current pool tick, read straight from PoolManager storage via Uniswap's StateView lens. */
@@ -80,7 +80,7 @@ export function useHookPricing() {
     contracts: (
       ["realisedVolBps", "utilisationBps", "volFee", "currentFee"] as const
     ).map((fn) => ({ address: deployed.optionsHook, abi: optionsHookAbi, functionName: fn }) as const),
-    query: { refetchInterval: 8_000 },
+    query: { refetchInterval: activeNetwork.live ? 20_000 : 8_000 },
   });
 
   return {

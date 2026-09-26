@@ -1,38 +1,19 @@
 import { encodeAbiParameters, keccak256, type Address, type Hex } from "viem";
-import localFork from "../../deployments/base-fork.json";
-import hostedFork from "../../deployments/hosted-fork.json";
+
+import { NETWORKS, selectedNetwork, type Deployment } from "./networks";
+
+export type { Deployment };
 
 /**
- * Which chain's contracts this build targets.
+ * The contracts this page load is talking to.
  *
- * The local anvil fork and the hosted one are BOTH chain 31337 but deploy to different addresses
- * (different solc resolution produces a different init code hash, which moves the CREATE2 hook and
- * everything after it). So the chain id cannot pick between them — the build has to.
- *
- * `NEXT_PUBLIC_DEPLOYMENT=hosted` on Vercel; unset locally. A stopgap until the network registry
- * lands and a deployment becomes a property of the selected network rather than of the build.
+ * Resolved once, at module scope, from the network the user picked — see `lib/networks.ts` for why
+ * switching reloads rather than re-rendering. Everything downstream can therefore go on importing
+ * a plain object instead of threading a hook through seventy call sites.
  */
-const deployment = process.env.NEXT_PUBLIC_DEPLOYMENT === "hosted" ? hostedFork : localFork;
+export const activeNetwork = NETWORKS[selectedNetwork()];
 
-export type Deployment = {
-  chainId: number;
-  poolManager: Address;
-  aqua: Address;
-  weth: Address;
-  usdc: Address;
-  optionsHook: Address;
-  optionsManager: Address;
-  fee: number;
-  tickSpacing: number;
-  strikeWidth: number;
-  spotTick: number;
-  /** Fixed round-dollar strike ladder, ascending. Same for every user. */
-  strikeUsd: number[];
-  strikeTicks: number[];
-  swapRouter?: Address;
-};
-
-export const deployed = deployment as unknown as Deployment;
+export const deployed: Deployment = activeNetwork.deployment;
 
 /** Uniswap v4 StateView on Base — reads PoolManager storage without an unlock. */
 export const STATE_VIEW: Address = "0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71";
