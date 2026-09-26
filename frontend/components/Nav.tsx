@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
+import { useAppKit, useAppKitNetwork } from "@reown/appkit/react";
 import { AlertTriangle, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { baseFork } from "@/lib/wagmi";
+import { baseFork, reownProjectId } from "@/lib/wagmi";
 
 const TABS = [
   { href: "/", label: "Chain" },
@@ -17,17 +18,23 @@ const TABS = [
 ];
 
 /**
+ * Wallet controls come in two shapes, and the choice is made once, here.
+ *
+ * AppKit's hooks throw outright if `createAppKit` never ran, so they cannot sit behind an `if`
+ * inside one component — the branch has to BE the component. `reownProjectId` is a build-time
+ * constant, so this picks one and never switches back.
+ */
+const WalletCluster = reownProjectId ? AppKitCluster : InjectedCluster;
+const SwitchNetworkButton = reownProjectId ? AppKitSwitch : WagmiSwitch;
+
+/**
  * N6 masthead + tab rail — the reference's own nav shape: heavy wordmark on
  * its own line, a tab row underneath carrying a thick active underline, and
  * the utility cluster pushed right.
  */
 export function Nav() {
   const path = usePathname();
-  const { address, isConnected, chainId } = useAccount();
-  const { connect, connectors, isPending } = useConnect();
-  const { disconnect } = useDisconnect();
-  const { switchChain, isPending: switching } = useSwitchChain();
-  const injected = connectors[0];
+  const { isConnected, chainId } = useAccount();
 
   const wrongNetwork = isConnected && chainId !== baseFork.id;
 
@@ -37,25 +44,7 @@ export function Nav() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <h1 className="font-display text-[34px] font-extrabold leading-none tracking-[-0.04em]">Recycled</h1>
 
-          {isConnected ? (
-            <div className="flex items-center gap-2">
-              <span className="rounded-pill border-rule border-line bg-card px-3 py-2 font-mono text-xs font-medium shadow-xs">
-                {address?.slice(0, 6)}…{address?.slice(-4)}
-              </span>
-              <Button variant="outline" size="sm" onClick={() => disconnect()}>
-                Disconnect
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="lime"
-              size="sm"
-              disabled={!injected || isPending}
-              onClick={() => injected && connect({ connector: injected })}
-            >
-              <Wallet aria-hidden="true" /> {isPending ? "Connecting…" : "Connect wallet"}
-            </Button>
-          )}
+          <WalletCluster />
         </div>
 
         <nav className="mt-4 flex gap-7 border-b-heavy border-line">
@@ -87,11 +76,94 @@ export function Nav() {
             <strong className="font-extrabold">Wrong network.</strong> This runs on the Base fork, chain{" "}
             <span className="font-mono">{baseFork.id}</span>.
           </span>
-          <Button size="sm" disabled={switching} onClick={() => switchChain({ chainId: baseFork.id })}>
-            {switching ? "Switching…" : "Switch"}
-          </Button>
+          <SwitchNetworkButton />
         </div>
       )}
     </>
+  );
+}
+
+/** Reown's modal: one button in, and every wallet behind it — extension, phone, or the account view. */
+function AppKitCluster() {
+  const { address, isConnected } = useAccount();
+  const { open } = useAppKit();
+
+  if (!isConnected) {
+    return (
+      <Button variant="lime" size="sm" onClick={() => open()}>
+        <Wallet aria-hidden="true" /> Connect wallet
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {/* The address is a control here, not a readout: it opens AppKit's account view, which
+          carries the balance, the copy button and the session the wallet actually holds. */}
+      <button
+        onClick={() => open({ view: "Account" })}
+        className="press rounded-pill border-rule border-line bg-card px-3 py-2 font-mono text-xs font-medium shadow-xs transition-colors [transition-duration:120ms] hover:bg-paper-2"
+      >
+        {address?.slice(0, 6)}…{address?.slice(-4)}
+      </button>
+      <DisconnectButton />
+    </div>
+  );
+}
+
+/** No project id, no relay, no modal — so connect the browser extension directly. */
+function InjectedCluster() {
+  const { address, isConnected } = useAccount();
+  const { connect, connectors, isPending } = useConnect();
+  const injected = connectors.find((c) => c.type === "injected") ?? connectors[0];
+
+  if (!isConnected) {
+    return (
+      <Button
+        variant="lime"
+        size="sm"
+        disabled={!injected || isPending}
+        onClick={() => injected && connect({ connector: injected })}
+      >
+        <Wallet aria-hidden="true" /> {isPending ? "Connecting…" : "Connect wallet"}
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="rounded-pill border-rule border-line bg-card px-3 py-2 font-mono text-xs font-medium shadow-xs">
+        {address?.slice(0, 6)}…{address?.slice(-4)}
+      </span>
+      <DisconnectButton />
+    </div>
+  );
+}
+
+function DisconnectButton() {
+  const { disconnect } = useDisconnect();
+  return (
+    <Button variant="outline" size="sm" onClick={() => disconnect()}>
+      Disconnect
+    </Button>
+  );
+}
+
+/** AppKit owns the network selection, so the switch goes through it and its modal stays in step. */
+function AppKitSwitch() {
+  const { switchNetwork } = useAppKitNetwork();
+  return (
+    <Button size="sm" onClick={() => switchNetwork(baseFork)}>
+      Switch
+    </Button>
+  );
+}
+
+function WagmiSwitch() {
+  const { switchChain, isPending } = useSwitchChain();
+  return (
+    <Button size="sm" disabled={isPending} onClick={() => switchChain({ chainId: baseFork.id })}>
+      {isPending ? "Switching…" : "Switch"}
+    </Button>
   );
 }

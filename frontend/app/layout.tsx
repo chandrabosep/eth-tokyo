@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -30,10 +31,14 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // wagmi keeps the connection in a cookie (see lib/wagmi.ts), and this is what hands it to the
+  // client on the first render so the nav does not flash a disconnected state on every reload.
+  const cookies = headers().get("cookie");
+
   return (
     <html lang="en" className={`${outfit.variable} ${mono.variable}`}>
       <body className="min-h-screen font-sans antialiased">
-        <Providers>
+        <Providers cookies={cookies}>
           <div className="mx-auto w-full max-w-[1180px] px-4 pb-24 sm:px-6">
             <Nav />
             {children}
