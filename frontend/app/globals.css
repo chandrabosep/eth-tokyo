@@ -209,3 +209,19 @@
     animation-name: none !important;
   }
 }
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: oklch(var(--color-paper));
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(var(--color-ink));
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(var(--color-ink-2));
+}
